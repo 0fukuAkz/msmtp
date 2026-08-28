@@ -1,29 +1,23 @@
 """Comprehensive tests for Mercury SMTP with mocking."""
 
-import asyncio
 import logging
 import ssl
-from datetime import datetime, UTC
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, patch
 
-import pytest
 import aiosmtplib
+import pytest
 
 from msmtp import (
     AsyncSMTPSender,
     CircuitBreaker,
     CircuitBreakerConfig,
     CircuitState,
-    EmailResult,
     LoadBalancingStrategy,
-    RateLimiter,
     RateLimiterConfig,
     SMTPServerConfig,
-    SMTPConnectionError,
-    SMTPAuthenticationError,
+    sanitize_subject,
     validate_email_address,
     validate_email_list,
-    sanitize_subject,
 )
 
 
@@ -40,10 +34,10 @@ class TestEmailValidation:
         """Test invalid email formats."""
         with pytest.raises(ValueError, match="Invalid email address format"):
             validate_email_address("not-an-email")
-        
+
         with pytest.raises(ValueError, match="Invalid email address format"):
             validate_email_address("@example.com")
-        
+
         with pytest.raises(ValueError, match="Invalid email address format"):
             validate_email_address("user@")
 
@@ -51,7 +45,7 @@ class TestEmailValidation:
         """Test detection of header injection attempts."""
         with pytest.raises(ValueError, match="newline"):
             validate_email_address("user@example.com\nBcc: attacker@evil.com")
-        
+
         with pytest.raises(ValueError, match="newline"):
             validate_email_address("user@example.com\r\nCc: attacker@evil.com")
 
@@ -63,7 +57,7 @@ class TestEmailValidation:
     def test_email_list_validation(self):
         """Test email list validation."""
         validate_email_list(["user1@example.com", "user2@example.com"])
-        
+
         with pytest.raises(ValueError):
             validate_email_list(["valid@example.com", "invalid"])
 
@@ -71,8 +65,10 @@ class TestEmailValidation:
         """Test subject sanitization."""
         assert sanitize_subject("Normal subject") == "Normal subject"
         assert sanitize_subject("Subject\nwith\nnewlines") == "Subject with newlines"
-        assert sanitize_subject("Subject\x00with\x00nulls") == "Subjectwithnulls"  # Null bytes removed
-        
+        assert (
+            sanitize_subject("Subject\x00with\x00nulls") == "Subjectwithnulls"
+        )  # Null bytes removed
+
         # Test truncation
         long_subject = "A" * 1000
         result = sanitize_subject(long_subject)
@@ -94,7 +90,7 @@ class TestSMTPServerConfig:
     def test_insecure_config_warning(self, caplog):
         """Test warning for insecure configuration."""
         with caplog.at_level(logging.WARNING):
-            config = SMTPServerConfig(
+            _config = SMTPServerConfig(
                 host="smtp.example.com",
                 use_tls=False,
                 use_ssl=False,
@@ -109,7 +105,7 @@ class TestSMTPServerConfig:
     def test_ssl_verification_disabled_warning(self, caplog):
         """Test warning for disabled SSL verification."""
         with caplog.at_level(logging.WARNING):
-            config = SMTPServerConfig(
+            _config = SMTPServerConfig(
                 host="smtp.example.com",
                 verify_ssl=False,
             )
@@ -122,9 +118,10 @@ class TestSMTPServerConfig:
 
     def test_password_provider(self):
         """Test password provider."""
+
         def get_password():
             return "secret-password"
-        
+
         config = SMTPServerConfig(
             host="smtp.example.com",
             password_provider=get_password,
@@ -155,11 +152,11 @@ class TestCircuitBreaker:
             "test-server",
             CircuitBreakerConfig(failure_threshold=3),
         )
-        
+
         # Record 3 failures
         for i in range(3):
             cb.record_failure(Exception(f"Error {i}"))
-        
+
         # Circuit should be open
         assert not cb.is_available()
         assert cb._stats.state == CircuitState.OPEN
@@ -173,16 +170,17 @@ class TestCircuitBreaker:
                 timeout_seconds=1,
             ),
         )
-        
+
         # Open the circuit
         cb.record_failure(Exception("Error 1"))
         cb.record_failure(Exception("Error 2"))
         assert not cb.is_available()
-        
+
         # Wait for timeout
         import time
+
         time.sleep(1.1)
-        
+
         # Should transition to half-open
         assert cb._get_current_state() == CircuitState.HALF_OPEN
 
@@ -196,18 +194,18 @@ class TestCircuitBreaker:
                 timeout_seconds=0,
             ),
         )
-        
+
         # Open the circuit
         cb.record_failure(Exception("Error 1"))
         cb.record_failure(Exception("Error 2"))
-        
+
         # Force half-open
         cb._stats.state = CircuitState.HALF_OPEN
-        
+
         # Record successes
         cb.record_success()
         cb.record_success()
-        
+
         # Should be closed
         assert cb._stats.state == CircuitState.CLOSED
         assert cb.is_available()
@@ -221,34 +219,35 @@ class TestCircuitBreaker:
                 monitor_window_seconds=2,
             ),
         )
-        
+
         # Add some failures
         cb.record_failure(Exception("Error 1"))
         cb.record_failure(Exception("Error 2"))
-        
+
         # Wait for window to expire
         import time
+
         time.sleep(2.1)
-        
+
         # Add more failures (should not trigger open)
         cb.record_failure(Exception("Error 3"))
-        
+
         # Circuit should still be closed (old failures cleaned up)
         assert cb.is_available()
 
     def test_error_message_tracking(self):
         """Test circuit breaker tracks recent error messages."""
         cb = CircuitBreaker("test-server")
-        
+
         errors = [
             Exception("Database timeout"),
             Exception("Network error"),
             Exception("Database timeout"),  # Duplicate
         ]
-        
+
         for err in errors:
             cb.record_failure(err)
-        
+
         # Should track unique messages
         error_msgs = cb._stats.last_error_messages
         assert len(error_msgs) == 2  # Only unique messages
@@ -293,7 +292,7 @@ class TestAsyncSMTPSender:
                     subject="Test",
                     body_text="Hello World",
                 )
-        
+
         assert result.success
         assert result.message_id == "message-id-123"
         assert result.attempts == 1
@@ -308,7 +307,7 @@ class TestAsyncSMTPSender:
                 subject="Test",
                 body_text="Hello",
             )
-        
+
         assert not result.success
         assert "validation failed" in result.error.lower()
         assert result.attempts == 0
@@ -319,7 +318,7 @@ class TestAsyncSMTPSender:
         mock_smtp.send_message = AsyncMock(
             side_effect=aiosmtplib.SMTPConnectError("Connection refused")
         )
-        
+
         with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp):
             async with AsyncSMTPSender([smtp_server]) as sender:
                 # Send multiple failing emails
@@ -331,7 +330,7 @@ class TestAsyncSMTPSender:
                         body_text="Hello",
                     )
                     assert not result.success
-                
+
                 # Circuit breaker should be open
                 pool = sender._pools[smtp_server.name]
                 assert not pool.runtime.circuit_breaker.is_available()
@@ -346,7 +345,7 @@ class TestAsyncSMTPSender:
                 ({}, "message-id-123"),
             ]
         )
-        
+
         with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp):
             async with AsyncSMTPSender([smtp_server], max_retries=3) as sender:
                 result = await sender.send(
@@ -355,7 +354,7 @@ class TestAsyncSMTPSender:
                     subject="Test",
                     body_text="Hello",
                 )
-        
+
         assert result.success
         assert result.attempts == 3
         assert mock_smtp.send_message.call_count == 3
@@ -365,7 +364,7 @@ class TestAsyncSMTPSender:
         mock_smtp.login = AsyncMock(
             side_effect=aiosmtplib.SMTPAuthenticationError(535, "Invalid credentials")
         )
-        
+
         with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp):
             async with AsyncSMTPSender([smtp_server]) as sender:
                 result = await sender.send(
@@ -374,7 +373,7 @@ class TestAsyncSMTPSender:
                     subject="Test",
                     body_text="Hello",
                 )
-        
+
         assert not result.success
         assert "authentication" in result.error.lower()
 
@@ -384,8 +383,9 @@ class TestAsyncSMTPSender:
             rate_limiter = RateLimiterConfig(per_second=2.0, burst_size=1)
             async with AsyncSMTPSender([smtp_server], rate_limiter=rate_limiter) as sender:
                 import time
+
                 start = time.time()
-                
+
                 # Burst size of 1 forces every email past the first to wait
                 # for a token refill at 2/sec (~0.5s each).
                 for _ in range(3):
@@ -395,7 +395,7 @@ class TestAsyncSMTPSender:
                         subject="Test",
                         body_text="Hello",
                     )
-                
+
                 elapsed = time.time() - start
                 # With 2/sec rate and no burst allowance, 3 emails should take
                 # at least ~0.4 seconds (two refills needed).
@@ -414,9 +414,9 @@ class TestAsyncSMTPSender:
                     }
                     for i in range(10)
                 ]
-                
+
                 result = await sender.send_bulk(emails, concurrency=5)
-        
+
         assert result.total == 10
         assert result.success_count == 10
         assert result.failed_count == 0
@@ -429,17 +429,11 @@ class TestAsyncSMTPSender:
             SMTPServerConfig(name="s2", host="smtp2.example.com"),
             SMTPServerConfig(name="s3", host="smtp3.example.com"),
         ]
-        
-        async with AsyncSMTPSender(
-            servers,
-            strategy=LoadBalancingStrategy.ROUND_ROBIN
-        ) as sender:
+
+        async with AsyncSMTPSender(servers, strategy=LoadBalancingStrategy.ROUND_ROBIN) as sender:
             # Select servers multiple times
-            selected = [
-                sender._select_server("test@example.com").server.name
-                for _ in range(6)
-            ]
-            
+            selected = [sender._select_server("test@example.com").server.name for _ in range(6)]
+
             # Should cycle through servers
             assert selected[:3] == ["s1", "s2", "s3"]
             assert selected[3:6] == ["s1", "s2", "s3"]
@@ -451,8 +445,10 @@ class TestAsyncSMTPSender:
             host="smtp.example.com",
             ssl_context=custom_context,
         )
-        
-        with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp) as mock_smtp_class:
+
+        with patch(
+            "msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp
+        ) as mock_smtp_class:
             async with AsyncSMTPSender([server]) as sender:
                 await sender.send(
                     from_addr="sender@example.com",
@@ -460,7 +456,7 @@ class TestAsyncSMTPSender:
                     subject="Test",
                     body_text="Hello",
                 )
-            
+
             # Verify SSL context was passed
             call_args = mock_smtp_class.call_args
             assert call_args.kwargs["tls_context"] == custom_context
@@ -469,7 +465,7 @@ class TestAsyncSMTPSender:
         """Test proper cleanup on close."""
         with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp):
             sender = AsyncSMTPSender([smtp_server])
-            
+
             # Send an email to create connections
             await sender.send(
                 from_addr="sender@example.com",
@@ -477,10 +473,10 @@ class TestAsyncSMTPSender:
                 subject="Test",
                 body_text="Hello",
             )
-            
+
             # Close sender
             await sender.close()
-            
+
             # Verify connections were closed
             mock_smtp.quit.assert_called()
 
@@ -492,19 +488,19 @@ class TestConnectionPool:
     async def test_connection_reuse(self, mock_smtp):
         """Test connections are reused."""
         server = SMTPServerConfig(host="smtp.example.com")
-        
+
         with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp):
             from msmtp.connection_pool import SMTPConnectionPool
-            
+
             pool = SMTPConnectionPool(server)
-            
+
             # Acquire and release connection
             conn1 = await pool.acquire()
             await pool.release(conn1)
-            
+
             # Acquire again - should reuse same connection
             conn2 = await pool.acquire()
-            
+
             assert conn1 is conn2
             assert mock_smtp.connect.call_count == 1  # Only connected once
 
@@ -520,14 +516,13 @@ class TestConnectionPool:
             "msmtp.connection_pool.aiosmtplib.SMTP",
             side_effect=lambda *a, **kw: AsyncMock(spec=real_smtp_cls),
         ):
-            from msmtp.connection_pool import SMTPConnectionPool, ConnectionPoolException
-            
+            from msmtp.connection_pool import ConnectionPoolException, SMTPConnectionPool
+
             pool = SMTPConnectionPool(server, max_connections=2)
-            
+
             # Acquire max connections
-            conn1 = await pool.acquire()
-            conn2 = await pool.acquire()
-            
+            _conn1 = await pool.acquire()
+            _conn2 = await pool.acquire()
             # Trying to acquire more should fail
             with pytest.raises(ConnectionPoolException):
                 await pool.acquire()

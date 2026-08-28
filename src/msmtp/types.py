@@ -2,9 +2,10 @@
 
 import logging
 import ssl
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 class SMTPServerConfig:
     """
     Configuration for an SMTP server.
-    
+
     Attributes:
         host: SMTP server hostname
         port: SMTP server port (25, 587, 465)
@@ -34,25 +35,25 @@ class SMTPServerConfig:
 
     host: str
     port: int = 587
-    username: Optional[str] = None
-    password: Optional[str] = None
+    username: str | None = None
+    password: str | None = None
     use_tls: bool = True
     use_ssl: bool = False
-    name: Optional[str] = None
+    name: str | None = None
     weight: int = 10
     priority: int = 0
     max_per_hour: int = 0
-    from_email: Optional[str] = None
+    from_email: str | None = None
     timeout: int = 30
     verify_ssl: bool = True
-    ssl_context: Optional[ssl.SSLContext] = None
-    password_provider: Optional[Callable[[], str]] = None
+    ssl_context: ssl.SSLContext | None = None
+    password_provider: Callable[[], str] | None = None
 
     def __post_init__(self) -> None:
         """Set default name and validate security settings."""
         if self.name is None:
             self.name = f"{self.host}:{self.port}"
-        
+
         # Security warnings
         if not self.use_tls and not self.use_ssl:
             logger.warning(
@@ -63,9 +64,9 @@ class SMTPServerConfig:
                     "port": self.port,
                     "issue": "TLS/SSL disabled",
                     "risk": "credentials_sent_in_plaintext",
-                }
+                },
             )
-        
+
         if not self.verify_ssl and (self.use_tls or self.use_ssl):
             logger.warning(
                 "ssl_verification_disabled",
@@ -75,16 +76,16 @@ class SMTPServerConfig:
                     "port": self.port,
                     "issue": "SSL certificate verification disabled",
                     "risk": "man_in_the_middle_attack",
-                }
+                },
             )
-    
+
     def get_password(self) -> str:
         """Get password from provider or direct value."""
         if self.password_provider:
             return self.password_provider()
         return self.password or ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary (excludes sensitive data)."""
         return {
             "host": self.host,
@@ -107,7 +108,7 @@ class SMTPServerConfig:
 class EmailResult:
     """
     Result of a single email send operation.
-    
+
     Attributes:
         success: Whether the send succeeded
         message_id: SMTP message ID
@@ -120,15 +121,15 @@ class EmailResult:
     """
 
     success: bool
-    message_id: Optional[str] = None
-    recipient: Optional[str] = None
-    error: Optional[str] = None
-    server: Optional[str] = None
+    message_id: str | None = None
+    recipient: str | None = None
+    error: str | None = None
+    server: str | None = None
     attempts: int = 1
-    latency_ms: Optional[float] = None
-    timestamp: Optional[datetime] = None
+    latency_ms: float | None = None
+    timestamp: datetime | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "success": self.success,
@@ -146,7 +147,7 @@ class EmailResult:
 class BulkSendResult:
     """
     Result of a bulk send operation.
-    
+
     Attributes:
         total: Total emails attempted
         success_count: Number of successful sends
@@ -159,7 +160,7 @@ class BulkSendResult:
     success_count: int = 0
     failed_count: int = 0
     results: list[EmailResult] = field(default_factory=list)
-    duration_seconds: Optional[float] = None
+    duration_seconds: float | None = None
 
     @property
     def success_rate(self) -> float:
@@ -168,7 +169,7 @@ class BulkSendResult:
             return 0.0
         return (self.success_count / self.total) * 100
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "total": self.total,

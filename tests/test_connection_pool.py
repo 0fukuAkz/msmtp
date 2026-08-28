@@ -2,10 +2,10 @@
 
 import asyncio
 import ssl
+from unittest.mock import AsyncMock, patch
 
 import aiosmtplib
 import pytest
-from unittest.mock import AsyncMock, patch
 
 from msmtp import SMTPServerConfig
 from msmtp.connection_pool import (

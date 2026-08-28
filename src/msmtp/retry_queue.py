@@ -1,13 +1,14 @@
 """Retry queue with exponential backoff."""
 
 import asyncio
-import logging
-from typing import Dict, Any, Optional, Callable, Awaitable, List
-from dataclasses import dataclass, field
-from datetime import datetime, UTC, timedelta
-from enum import Enum
 import heapq
 import json
+import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from enum import Enum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -25,27 +26,27 @@ class RetryItem:
     """Item in retry queue."""
 
     id: str
-    data: Dict[str, Any]
+    data: dict[str, Any]
     attempt: int = 0
     max_attempts: int = 3
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    next_retry_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    last_error: Optional[str] = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    next_retry_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_error: str | None = None
     status: RetryStatus = RetryStatus.PENDING
 
-    def __lt__(self, other):
+    def __lt__(self, other: "RetryItem") -> bool:
         return self.next_retry_at < other.next_retry_at
 
-    def calculate_next_retry(self, base_delay: float = 1.0, max_delay: float = 300.0):
+    def calculate_next_retry(self, base_delay: float = 1.0, max_delay: float = 300.0) -> None:
         """Calculate next retry time with exponential backoff."""
         delay = min(base_delay * (2**self.attempt), max_delay)
         # Add jitter
         import random
 
         delay *= 0.5 + random.random()
-        self.next_retry_at = datetime.now(UTC) + timedelta(seconds=delay)
+        self.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "data": self.data,
@@ -74,9 +75,9 @@ class RetryQueue:
 
     def __init__(
         self,
-        config: Optional[RetryConfig] = None,
-        handler: Optional[Callable[[Dict[str, Any]], Awaitable[bool]]] = None,
-        persist_path: Optional[str] = None,
+        config: RetryConfig | None = None,
+        handler: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
+        persist_path: str | None = None,
     ):
         """
         Initialize retry queue.
@@ -90,11 +91,11 @@ class RetryQueue:
         self.handler = handler
         self.persist_path = persist_path
 
-        self._queue: List[RetryItem] = []
-        self._items: Dict[str, RetryItem] = {}
+        self._queue: list[RetryItem] = []
+        self._items: dict[str, RetryItem] = {}
         self._lock = asyncio.Lock()
         self._running = False
-        self._process_task: Optional[asyncio.Task] = None
+        self._process_task: asyncio.Task[None] | None = None
 
         # Statistics
         self.stats = {
@@ -109,7 +110,7 @@ class RetryQueue:
         if persist_path:
             self._load_state()
 
-    async def add(self, id: str, data: Dict[str, Any], error: Optional[str] = None) -> RetryItem:
+    async def add(self, id: str, data: dict[str, Any], error: str | None = None) -> RetryItem:
         """Add item to retry queue."""
         async with self._lock:
             if id in self._items:
@@ -145,9 +146,9 @@ class RetryQueue:
             await self._persist_state()
             return item
 
-    async def get_ready(self) -> List[RetryItem]:
+    async def get_ready(self) -> list[RetryItem]:
         """Get items ready for retry."""
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         ready = []
 
         async with self._lock:
@@ -182,7 +183,7 @@ class RetryQueue:
 
         return ready
 
-    async def mark_success(self, id: str):
+    async def mark_success(self, id: str) -> None:
         """Mark item as successfully processed."""
         async with self._lock:
             if id in self._items:
@@ -191,7 +192,7 @@ class RetryQueue:
                 del self._items[id]
                 await self._persist_state()
 
-    async def mark_failed(self, id: str, error: str):
+    async def mark_failed(self, id: str, error: str) -> None:
         """Mark item as failed, will be retried."""
         async with self._lock:
             item = self._items.get(id)
@@ -206,7 +207,7 @@ class RetryQueue:
         # Re-add to queue
         await self.add(id, data, error)
 
-    async def start(self):
+    async def start(self) -> None:
         """Start processing retry queue."""
         if self._running:
             return
@@ -215,7 +216,7 @@ class RetryQueue:
         self._process_task = asyncio.create_task(self._process_loop())
         logger.info("Retry queue started")
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop processing retry queue."""
         self._running = False
         if self._process_task:
@@ -228,7 +229,7 @@ class RetryQueue:
         await self._persist_state()
         logger.info("Retry queue stopped")
 
-    async def _process_loop(self):
+    async def _process_loop(self) -> None:
         """Main processing loop."""
         semaphore = asyncio.Semaphore(max(1, self.config.concurrency))
 
@@ -238,7 +239,7 @@ class RetryQueue:
 
                 if ready_items and self.handler:
 
-                    async def process_item(item: RetryItem):
+                    async def process_item(item: RetryItem) -> None:
                         async with semaphore:
                             try:
                                 if self.handler is None:
@@ -263,7 +264,7 @@ class RetryQueue:
                 logger.error(f"Error in retry queue: {e}")
                 await asyncio.sleep(self.config.process_interval)
 
-    async def _persist_state(self):
+    async def _persist_state(self) -> None:
         """Persist queue state to disk asynchronously."""
         if not self.persist_path:
             return
@@ -277,7 +278,7 @@ class RetryQueue:
         except Exception as e:
             logger.error(f"Failed to persist retry queue: {e}")
 
-    def _write_state_to_disk(self, state: dict):
+    def _write_state_to_disk(self, state: dict[str, Any]) -> None:
         """Synchronous write helper for to_thread."""
         try:
             # Atomic write pattern (write temp then rename)
@@ -291,7 +292,7 @@ class RetryQueue:
             logger.error(f"Disk write error in retry queue: {e}")
             raise
 
-    def _load_state(self):
+    def _load_state(self) -> None:
         """Load persisted state."""
         if not self.persist_path:
             return
@@ -302,7 +303,7 @@ class RetryQueue:
             if not os.path.exists(self.persist_path):
                 return
 
-            with open(self.persist_path, "r") as f:
+            with open(self.persist_path) as f:
                 state = json.load(f)
 
             for item_data in state.get("items", {}).values():
@@ -327,6 +328,6 @@ class RetryQueue:
         except Exception as e:
             logger.error(f"Failed to load retry queue: {e}")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get queue statistics."""
         return {**self.stats, "pending_count": len(self._items), "queue_size": len(self._queue)}

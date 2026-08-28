@@ -1,10 +1,10 @@
 """Circuit breaker pattern for SMTP servers."""
 
 import logging
-from datetime import datetime, timedelta, UTC
-from typing import Optional, Dict, Any
-from enum import Enum
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from enum import Enum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +34,9 @@ class CircuitBreakerStats:
     state: CircuitState
     failure_count: int = 0
     success_count: int = 0
-    last_failure_time: Optional[datetime] = None
-    last_success_time: Optional[datetime] = None
-    opened_at: Optional[datetime] = None
+    last_failure_time: datetime | None = None
+    last_success_time: datetime | None = None
+    opened_at: datetime | None = None
     total_opens: int = 0
     total_trips: int = 0  # Total state changes
     # Most-recent failure messages (kept small — last 5). The root cause
@@ -46,9 +46,9 @@ class CircuitBreakerStats:
     # the last few errors on the stats lets us include them in the
     # OPENING log line AND in the "No SMTP servers available" cascade
     # error so the cause is visible without log archaeology.
-    last_error_messages: list = field(default_factory=list)
+    last_error_messages: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "state": self.state.value,
             "failure_count": self.failure_count,
@@ -74,7 +74,7 @@ class CircuitBreaker:
     disabling them after consecutive failures.
     """
 
-    def __init__(self, server_name: str, config: Optional[CircuitBreakerConfig] = None):
+    def __init__(self, server_name: str, config: CircuitBreakerConfig | None = None):
         """
         Initialize circuit breaker.
 
@@ -106,7 +106,7 @@ class CircuitBreaker:
                     "state": current_state.value,
                     "failure_count": self._stats.failure_count,
                     "last_errors": self._stats.last_error_messages[:3],
-                }
+                },
             )
             return False
 
@@ -126,7 +126,7 @@ class CircuitBreaker:
         # If open, check if timeout elapsed
         if self._stats.state == CircuitState.OPEN:
             if self._stats.opened_at:
-                elapsed = (datetime.now(UTC) - self._stats.opened_at).total_seconds()
+                elapsed = (datetime.now(timezone.utc) - self._stats.opened_at).total_seconds()
                 if elapsed >= self.config.timeout_seconds:
                     # Transition to half-open
                     logger.info(
@@ -142,10 +142,10 @@ class CircuitBreaker:
         # If half-open, stay half-open
         return CircuitState.HALF_OPEN
 
-    def record_success(self):
+    def record_success(self) -> None:
         """Record successful operation."""
         current_state = self._get_current_state()
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
 
         self._stats.last_success_time = now
 
@@ -160,7 +160,7 @@ class CircuitBreaker:
                         "server": self.server_name,
                         "success_count": self._stats.success_count,
                         "success_threshold": self.config.success_threshold,
-                    }
+                    },
                 )
                 self._stats.state = CircuitState.CLOSED
                 self._stats.failure_count = 0
@@ -174,7 +174,7 @@ class CircuitBreaker:
                 self._stats.failure_count = 0
                 self._recent_failures.clear()
 
-    def record_failure(self, error: Exception):
+    def record_failure(self, error: Exception) -> None:
         """
         Record failed operation.
 
@@ -182,7 +182,7 @@ class CircuitBreaker:
             error: Exception that occurred
         """
         current_state = self._get_current_state()
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
 
         self._stats.last_failure_time = now
         self._stats.failure_count += 1
@@ -229,7 +229,7 @@ class CircuitBreaker:
         elif current_state == CircuitState.HALF_OPEN:
             # Any failure in half-open immediately opens circuit
             logger.warning(
-                "⚠️  Circuit breaker RE-OPENING for %s " "(failure during half-open state): %s",
+                "⚠️  Circuit breaker RE-OPENING for %s (failure during half-open state): %s",
                 self.server_name,
                 msg,
             )
@@ -239,14 +239,14 @@ class CircuitBreaker:
             self._stats.total_opens += 1
             self._stats.total_trips += 1
 
-    def force_open(self):
+    def force_open(self) -> None:
         """Manually open circuit (for maintenance, etc.)."""
         logger.warning(f"🔒 Manually opening circuit for {self.server_name}")
         self._stats.state = CircuitState.OPEN
-        self._stats.opened_at = datetime.now(UTC)
+        self._stats.opened_at = datetime.now(timezone.utc)
         self._stats.total_opens += 1
 
-    def force_close(self):
+    def force_close(self) -> None:
         """Manually close circuit (override)."""
         logger.info(f"🔓 Manually closing circuit for {self.server_name}")
         self._stats.state = CircuitState.CLOSED
@@ -254,7 +254,7 @@ class CircuitBreaker:
         self._stats.success_count = 0
         self._recent_failures.clear()
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get circuit breaker statistics."""
         current_state = self._get_current_state()
 
@@ -264,12 +264,12 @@ class CircuitBreaker:
         stats["is_available"] = current_state != CircuitState.OPEN
 
         if self._stats.opened_at and current_state == CircuitState.OPEN:
-            elapsed = (datetime.now(UTC) - self._stats.opened_at).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - self._stats.opened_at).total_seconds()
             stats["seconds_until_half_open"] = max(0, self.config.timeout_seconds - elapsed)
 
         return stats
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset circuit breaker to initial state."""
         logger.info(f"🔄 Resetting circuit breaker for {self.server_name}")
         self._stats = CircuitBreakerStats(state=CircuitState.CLOSED)

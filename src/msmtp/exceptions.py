@@ -36,10 +36,10 @@ def is_transient_error(exc: Exception) -> bool:
     Determine if an exception represents a transient error.
 
     Transient errors are temporary and may succeed on retry.
-    
+
     Args:
         exc: Exception to check
-        
+
     Returns:
         True if error is likely transient
     """
@@ -75,10 +75,10 @@ def is_transient_error(exc: Exception) -> bool:
 def categorize_exception(exc: Exception) -> str:
     """
     Categorize an exception for logging/metrics.
-    
+
     Args:
         exc: Exception to categorize
-        
+
     Returns:
         Category string (auth, connection, rate_limit, send, unknown)
     """

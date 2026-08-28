@@ -19,8 +19,9 @@ class TestMalformedResponses:
             )
         )
 
-        with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp), patch(
-            "msmtp.sender.asyncio.sleep", new=AsyncMock()
+        with (
+            patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
+            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=1) as sender:
                 result = await sender.send(
@@ -52,9 +53,10 @@ class TestMalformedResponses:
             side_effect=aiosmtplib.SMTPResponseException(552, "mailbox full")
         )
 
-        with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp), patch(
-            "msmtp.sender.asyncio.sleep", new=AsyncMock()
-        ) as mock_sleep:
+        with (
+            patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
+            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
             async with AsyncSMTPSender([smtp_server], max_retries=4) as sender:
                 result = await sender.send(
                     from_addr="sender@example.com",
@@ -72,9 +74,10 @@ class TestMalformedResponses:
             side_effect=aiosmtplib.SMTPResponseException(451, "temporary local problem")
         )
 
-        with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp), patch(
-            "msmtp.sender.asyncio.sleep", new=AsyncMock()
-        ) as mock_sleep:
+        with (
+            patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
+            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
             async with AsyncSMTPSender([smtp_server], max_retries=3) as sender:
                 result = await sender.send(
                     from_addr="sender@example.com",
@@ -93,8 +96,9 @@ class TestNetworkFailures:
     async def test_timeout_error_is_treated_as_transient(self, smtp_server, mock_smtp):
         mock_smtp.send_message = AsyncMock(side_effect=TimeoutError("timed out"))
 
-        with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp), patch(
-            "msmtp.sender.asyncio.sleep", new=AsyncMock()
+        with (
+            patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
+            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=2) as sender:
                 result = await sender.send(
@@ -112,8 +116,9 @@ class TestNetworkFailures:
             side_effect=ConnectionResetError("connection reset by peer")
         )
 
-        with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp), patch(
-            "msmtp.sender.asyncio.sleep", new=AsyncMock()
+        with (
+            patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
+            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=2) as sender:
                 result = await sender.send(
@@ -129,8 +134,9 @@ class TestNetworkFailures:
     async def test_server_disconnected_during_connect(self, smtp_server, mock_smtp):
         mock_smtp.connect = AsyncMock(side_effect=aiosmtplib.SMTPServerDisconnected("disconnected"))
 
-        with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp), patch(
-            "msmtp.sender.asyncio.sleep", new=AsyncMock()
+        with (
+            patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
+            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=1) as sender:
                 result = await sender.send(
@@ -144,12 +150,11 @@ class TestNetworkFailures:
 
     async def test_recipients_refused_exception(self, smtp_server, mock_smtp):
         refused = aiosmtplib.SMTPRecipientRefused(550, "refused", "to@example.com")
-        mock_smtp.send_message = AsyncMock(
-            side_effect=aiosmtplib.SMTPRecipientsRefused([refused])
-        )
+        mock_smtp.send_message = AsyncMock(side_effect=aiosmtplib.SMTPRecipientsRefused([refused]))
 
-        with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp), patch(
-            "msmtp.sender.asyncio.sleep", new=AsyncMock()
+        with (
+            patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
+            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=1) as sender:
                 result = await sender.send(

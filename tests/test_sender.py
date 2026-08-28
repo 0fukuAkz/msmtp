@@ -13,7 +13,6 @@ from msmtp import (
 )
 from msmtp.exceptions import SMTPConnectionError
 
-
 # ---------------------------------------------------------------------------
 # Message building
 # ---------------------------------------------------------------------------
@@ -206,8 +205,9 @@ class TestSendRetryBehavior:
             ]
         )
 
-        with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp), patch(
-            "msmtp.sender.asyncio.sleep", new=AsyncMock()
+        with (
+            patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
+            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=3) as sndr:
                 result = await sndr.send(
@@ -225,9 +225,10 @@ class TestSendRetryBehavior:
             side_effect=aiosmtplib.SMTPResponseException(550, "mailbox unavailable")
         )
 
-        with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp), patch(
-            "msmtp.sender.asyncio.sleep", new=AsyncMock()
-        ) as mock_sleep:
+        with (
+            patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
+            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
             async with AsyncSMTPSender([smtp_server], max_retries=5) as sndr:
                 result = await sndr.send(
                     from_addr="sender@example.com",
@@ -243,8 +244,9 @@ class TestSendRetryBehavior:
     async def test_exhausts_retries_and_fails(self, smtp_server, mock_smtp):
         mock_smtp.send_message = AsyncMock(side_effect=aiosmtplib.SMTPConnectError("still down"))
 
-        with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp), patch(
-            "msmtp.sender.asyncio.sleep", new=AsyncMock()
+        with (
+            patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
+            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=3) as sndr:
                 result = await sndr.send(
@@ -258,7 +260,9 @@ class TestSendRetryBehavior:
         assert result.attempts == 3
 
     async def test_auth_error_fails_without_retry(self, smtp_server, mock_smtp):
-        mock_smtp.login = AsyncMock(side_effect=aiosmtplib.SMTPAuthenticationError(535, "bad creds"))
+        mock_smtp.login = AsyncMock(
+            side_effect=aiosmtplib.SMTPAuthenticationError(535, "bad creds")
+        )
 
         with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp):
             async with AsyncSMTPSender([smtp_server], max_retries=5) as sndr:
@@ -277,8 +281,9 @@ class TestSendRetryBehavior:
             return_value=({"to@example.com": (550, b"mailbox unavailable")}, "250 OK")
         )
 
-        with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp), patch(
-            "msmtp.sender.asyncio.sleep", new=AsyncMock()
+        with (
+            patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
+            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=1) as sndr:
                 result = await sndr.send(
@@ -307,8 +312,9 @@ class TestSendRetryBehavior:
     async def test_connection_failure_trips_circuit_breaker(self, smtp_server, mock_smtp):
         mock_smtp.connect = AsyncMock(side_effect=OSError("connection refused"))
 
-        with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp), patch(
-            "msmtp.sender.asyncio.sleep", new=AsyncMock()
+        with (
+            patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
+            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=1) as sndr:
                 await sndr.send(

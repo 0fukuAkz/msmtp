@@ -3,31 +3,29 @@
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
+from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 from enum import Enum
 from types import TracebackType
-from typing import Optional, List, Dict, Any, Type
-from datetime import datetime, UTC
-from email.message import EmailMessage
-from email.utils import formataddr, formatdate, make_msgid
+from typing import Any
 
 import aiosmtplib
 
 from .connection_pool import AsyncConnectionPool, SMTPConnectionPool
+from .exceptions import (
+    SMTPAuthenticationError,
+    SMTPConnectionError,
+    is_transient_error,
+)
 from .rate_limiter import RateLimiter, RateLimiterConfig
-from .retry_queue import RetryQueue, RetryConfig
-from .types import SMTPServerConfig, EmailResult, BulkSendResult
+from .retry_queue import RetryConfig, RetryQueue
+from .types import BulkSendResult, EmailResult, SMTPServerConfig
 from .validation import (
+    sanitize_header_value,
+    sanitize_subject,
     validate_email_address,
     validate_email_list,
-    sanitize_subject,
-    sanitize_header_value,
-)
-from .exceptions import (
-    MercurySMTPError,
-    SMTPConnectionError,
-    SMTPAuthenticationError,
-    SMTPRateLimitError,
-    is_transient_error,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,14 +42,14 @@ class LoadBalancingStrategy(Enum):
 class AsyncSMTPSender:
     """
     Production-grade async SMTP sender.
-    
+
     Features:
     - Connection pooling with health checks
     - Circuit breaker for failing servers
     - Rate limiting (token bucket)
     - Automatic retry with exponential backoff
     - Multi-server load balancing
-    
+
     Example:
         >>> async with AsyncSMTPSender([server]) as sender:
         ...     result = await sender.send(
@@ -64,15 +62,15 @@ class AsyncSMTPSender:
 
     def __init__(
         self,
-        servers: List[SMTPServerConfig],
-        rate_limiter: Optional[RateLimiterConfig] = None,
-        retry_config: Optional[RetryConfig] = None,
+        servers: list[SMTPServerConfig],
+        rate_limiter: RateLimiterConfig | None = None,
+        retry_config: RetryConfig | None = None,
         max_retries: int = 3,
         strategy: LoadBalancingStrategy = LoadBalancingStrategy.WEIGHTED,
     ):
         """
         Initialize async SMTP sender.
-        
+
         Args:
             servers: List of SMTP server configurations
             rate_limiter: Global rate limiter config
@@ -85,12 +83,12 @@ class AsyncSMTPSender:
         self.max_retries = max_retries
 
         # Create connection pools per server
-        self._pools: Dict[str, SMTPConnectionPool] = {}
+        self._pools: dict[str, SMTPConnectionPool] = {}
         for server in servers:
             self._pools[server.name or server.host] = SMTPConnectionPool(server)
 
         # Rate limiter (optional)
-        self._rate_limiter: Optional[RateLimiter] = None
+        self._rate_limiter: RateLimiter | None = None
         if rate_limiter:
             self._rate_limiter = RateLimiter(rate_limiter)
 
@@ -111,15 +109,15 @@ class AsyncSMTPSender:
                 "strategy": self.strategy.value,
                 "max_retries": self.max_retries,
                 "rate_limiter_enabled": self._rate_limiter is not None,
-            }
+            },
         )
         return self
 
     async def __aexit__(
         self,
-        exc_type: Optional[Type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
     ) -> None:
         """Exit async context and clean up."""
         await self.close()
@@ -127,18 +125,18 @@ class AsyncSMTPSender:
     async def send(
         self,
         from_addr: str,
-        to_addrs: List[str],
+        to_addrs: list[str],
         subject: str,
-        body_text: Optional[str] = None,
-        body_html: Optional[str] = None,
-        cc: Optional[List[str]] = None,
-        bcc: Optional[List[str]] = None,
-        reply_to: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
+        body_text: str | None = None,
+        body_html: str | None = None,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        reply_to: str | None = None,
+        headers: dict[str, str] | None = None,
     ) -> EmailResult:
         """
         Send a single email.
-        
+
         Args:
             from_addr: Sender email address
             to_addrs: List of recipient email addresses
@@ -149,7 +147,7 @@ class AsyncSMTPSender:
             bcc: BCC recipients
             reply_to: Reply-To address
             headers: Additional email headers
-            
+
         Returns:
             EmailResult with send status
         """
@@ -172,14 +170,14 @@ class AsyncSMTPSender:
                     "error": str(e),
                     "from_addr": from_addr[:50] if from_addr else None,
                     "num_recipients": len(to_addrs) if to_addrs else 0,
-                }
+                },
             )
             return EmailResult(
                 success=False,
                 error=f"Email validation failed: {e}",
                 recipient=to_addrs[0] if to_addrs else None,
                 attempts=0,
-                timestamp=datetime.now(UTC),
+                timestamp=datetime.now(timezone.utc),
             )
 
         # Build email message
@@ -227,16 +225,14 @@ class AsyncSMTPSender:
                     # Check for send errors
                     if errors:
                         error_msg = f"Send errors: {errors}"
-                        pool.runtime.circuit_breaker.record_failure(
-                            SMTPConnectionError(error_msg)
-                        )
+                        pool.runtime.circuit_breaker.record_failure(SMTPConnectionError(error_msg))
                         logger.error(
                             "smtp_send_errors",
                             extra={
                                 "server": pool.server.name,
                                 "errors": str(errors),
                                 "recipient": to_addrs[0] if to_addrs else None,
-                            }
+                            },
                         )
                         raise SMTPConnectionError(error_msg)
 
@@ -252,7 +248,7 @@ class AsyncSMTPSender:
                             "server": pool.server.name,
                             "attempts": attempt,
                             "latency_ms": (time.perf_counter() - start) * 1000,
-                        }
+                        },
                     )
 
                     return EmailResult(
@@ -262,31 +258,31 @@ class AsyncSMTPSender:
                         server=pool.server.name,
                         attempts=attempt,
                         latency_ms=(time.perf_counter() - start) * 1000,
-                        timestamp=datetime.now(UTC),
+                        timestamp=datetime.now(timezone.utc),
                     )
 
             except (aiosmtplib.SMTPAuthenticationError, SMTPAuthenticationError) as e:
                 # Auth errors are permanent
-                if 'pool' in locals():
+                if "pool" in locals():
                     pool.runtime.circuit_breaker.record_failure(e)
                 logger.error(
                     "smtp_authentication_failed",
                     extra={
-                        "server": pool.server.name if 'pool' in locals() else "unknown",
-                        "username": pool.server.username if 'pool' in locals() else None,
+                        "server": pool.server.name if "pool" in locals() else "unknown",
+                        "username": pool.server.username if "pool" in locals() else None,
                         "error": str(e),
-                    }
+                    },
                 )
                 return EmailResult(
                     success=False,
                     error=str(e),
                     recipient=to_addrs[0] if to_addrs else None,
                     attempts=attempt,
-                    timestamp=datetime.now(UTC),
+                    timestamp=datetime.now(timezone.utc),
                 )
 
             except Exception as e:
-                if 'pool' in locals():
+                if "pool" in locals():
                     pool.runtime.circuit_breaker.record_failure(e)
                 logger.warning(
                     "smtp_send_attempt_failed",
@@ -297,7 +293,7 @@ class AsyncSMTPSender:
                         "error": str(e)[:200],
                         "is_transient": is_transient_error(e),
                         "recipient": to_addrs[0] if to_addrs else None,
-                    }
+                    },
                 )
 
                 # Check if transient
@@ -307,7 +303,7 @@ class AsyncSMTPSender:
                         error=str(e),
                         recipient=to_addrs[0] if to_addrs else None,
                         attempts=attempt,
-                        timestamp=datetime.now(UTC),
+                        timestamp=datetime.now(timezone.utc),
                     )
 
                 # Retry with backoff
@@ -320,21 +316,21 @@ class AsyncSMTPSender:
             error="Max retries exceeded",
             recipient=to_addrs[0] if to_addrs else None,
             attempts=self.max_retries,
-            timestamp=datetime.now(UTC),
+            timestamp=datetime.now(timezone.utc),
         )
 
     async def send_bulk(
         self,
-        emails: List[Dict[str, Any]],
+        emails: list[dict[str, Any]],
         concurrency: int = 10,
     ) -> BulkSendResult:
         """
         Send multiple emails concurrently.
-        
+
         Args:
             emails: List of email dictionaries (keys: from_addr, to_addrs, subject, etc.)
             concurrency: Maximum concurrent sends
-            
+
         Returns:
             BulkSendResult with aggregate stats
         """
@@ -343,7 +339,7 @@ class AsyncSMTPSender:
         # Semaphore for concurrency control
         sem = asyncio.Semaphore(concurrency)
 
-        async def send_with_semaphore(email: Dict[str, Any]) -> EmailResult:
+        async def send_with_semaphore(email: dict[str, Any]) -> EmailResult:
             async with sem:
                 return await self.send(**email)
 
@@ -368,18 +364,16 @@ class AsyncSMTPSender:
     def _select_server(self, from_addr: str) -> SMTPConnectionPool:
         """
         Select an SMTP server based on strategy.
-        
+
         Args:
             from_addr: Sender email address (for routing)
-            
+
         Returns:
             Selected connection pool
         """
         # Filter available servers (circuit breaker not open)
         available = [
-            pool
-            for pool in self._pools.values()
-            if pool.runtime.circuit_breaker.is_available()
+            pool for pool in self._pools.values() if pool.runtime.circuit_breaker.is_available()
         ]
 
         if not available:
@@ -417,14 +411,14 @@ class AsyncSMTPSender:
     def _build_message(
         self,
         from_addr: str,
-        to_addrs: List[str],
+        to_addrs: list[str],
         subject: str,
-        body_text: Optional[str] = None,
-        body_html: Optional[str] = None,
-        cc: Optional[List[str]] = None,
-        bcc: Optional[List[str]] = None,
-        reply_to: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
+        body_text: str | None = None,
+        body_html: str | None = None,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        reply_to: str | None = None,
+        headers: dict[str, str] | None = None,
     ) -> EmailMessage:
         """Build email message with sanitization."""
         msg = EmailMessage()
@@ -467,17 +461,17 @@ class AsyncSMTPSender:
             "smtp_sender_closing",
             extra={
                 "num_pools": len(self._pools),
-            }
+            },
         )
-        
+
         # Close all pools concurrently
         tasks = []
-        for pool_name, pool in self._pools.items():
+        for pool in self._pools.values():
             tasks.append(pool.close_all())
-        
+
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            
+
             # Log any close errors
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
@@ -486,7 +480,7 @@ class AsyncSMTPSender:
                         extra={
                             "pool": list(self._pools.keys())[i],
                             "error": str(result),
-                        }
+                        },
                     )
-        
+
         logger.info("smtp_sender_closed")

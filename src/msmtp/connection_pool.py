@@ -5,13 +5,12 @@ import logging
 import ssl
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import List, Optional
+from datetime import datetime, timezone
 
 import aiosmtplib
 
 from .circuit_breaker import CircuitBreaker, CircuitBreakerConfig
-from .exceptions import SMTPAuthenticationError, SMTPConnectionError, SMTPRateLimitError
+from .exceptions import SMTPAuthenticationError, SMTPConnectionError
 from .types import SMTPServerConfig
 
 logger = logging.getLogger(__name__)
@@ -53,20 +52,20 @@ class SMTPServerRuntime:
     total_sent: int = 0
     total_failures: int = 0
     consecutive_failures: int = 0
-    last_minute_reset: datetime = field(default_factory=lambda: datetime.now(UTC))
-    last_hour_reset: datetime = field(default_factory=lambda: datetime.now(UTC))
-    handshake_latencies: List[float] = field(default_factory=list)
-    send_latencies: List[float] = field(default_factory=list)
+    last_minute_reset: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_hour_reset: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    handshake_latencies: list[float] = field(default_factory=list)
+    send_latencies: list[float] = field(default_factory=list)
 
     @property
-    def avg_handshake_latency(self) -> Optional[float]:
+    def avg_handshake_latency(self) -> float | None:
         """Get average connection handshake latency in seconds."""
         if not self.handshake_latencies:
             return None
         return sum(self.handshake_latencies) / len(self.handshake_latencies)
 
     @property
-    def avg_send_latency(self) -> Optional[float]:
+    def avg_send_latency(self) -> float | None:
         """Get average mail sending latency in seconds."""
         if not self.send_latencies:
             return None
@@ -88,7 +87,7 @@ class SMTPServerRuntime:
 class SMTPConnectionPool:
     """
     SMTP connection pool with health checks and circuit breaker.
-    
+
     Maintains a pool of persistent SMTP connections to reduce handshake overhead.
     Includes health checks and automatic connection recycling.
     """
@@ -102,7 +101,7 @@ class SMTPConnectionPool:
     ):
         """
         Initialize connection pool.
-        
+
         Args:
             server: SMTP server configuration
             max_connections: Maximum pooled connections
@@ -114,7 +113,7 @@ class SMTPConnectionPool:
         self.health_check_interval = health_check_interval
         self.max_idle_time = max_idle_time
 
-        self._pool: List[aiosmtplib.SMTP] = []
+        self._pool: list[aiosmtplib.SMTP] = []
         self._in_use: set[aiosmtplib.SMTP] = set()
         self._lock = asyncio.Lock()
         self._last_health_check = time.monotonic()
@@ -127,10 +126,10 @@ class SMTPConnectionPool:
     async def acquire(self) -> aiosmtplib.SMTP:
         """
         Acquire a connection from the pool.
-        
+
         Returns:
             SMTP connection
-            
+
         Raises:
             ConnectionPoolException: If no connections available
         """
@@ -171,12 +170,12 @@ class SMTPConnectionPool:
     async def _create_connection(self) -> aiosmtplib.SMTP:
         """Create a new SMTP connection with SSL verification."""
         start = time.perf_counter()
-        
+
         # Prepare SSL context
         tls_context = self.server.ssl_context
         if tls_context is None and (self.server.use_tls or self.server.use_ssl):
             tls_context = ssl.create_default_context()
-            
+
             # Configure SSL verification
             if not self.server.verify_ssl:
                 tls_context.check_hostname = False
@@ -187,9 +186,9 @@ class SMTPConnectionPool:
                         "server": self.server.name,
                         "host": self.server.host,
                         "port": self.server.port,
-                    }
+                    },
                 )
-        
+
         try:
             smtp = aiosmtplib.SMTP(
                 hostname=self.server.host,
@@ -222,7 +221,7 @@ class SMTPConnectionPool:
                     "use_tls": self.server.use_tls,
                     "use_ssl": self.server.use_ssl,
                     "verify_ssl": self.server.verify_ssl,
-                }
+                },
             )
 
             return smtp
@@ -235,7 +234,7 @@ class SMTPConnectionPool:
                     "host": self.server.host,
                     "username": self.server.username,
                     "error": str(e),
-                }
+                },
             )
             raise SMTPAuthenticationError(f"Authentication failed: {e}") from e
         except Exception as e:
@@ -247,7 +246,7 @@ class SMTPConnectionPool:
                     "port": self.server.port,
                     "error_type": type(e).__name__,
                     "error": str(e)[:200],
-                }
+                },
             )
             raise SMTPConnectionError(f"Connection failed: {e}") from e
 
@@ -268,28 +267,22 @@ class SMTPConnectionPool:
                 "server": self.server.name,
                 "pooled_connections": len(self._pool),
                 "in_use_connections": len(self._in_use),
-            }
+            },
         )
-        
+
         async with self._lock:
             for conn in self._pool:
                 try:
                     await conn.quit()
                 except Exception as e:
-                    logger.debug(
-                        "connection_close_error",
-                        extra={"error": str(e)}
-                    )
+                    logger.debug("connection_close_error", extra={"error": str(e)})
             self._pool.clear()
 
             for conn in self._in_use:
                 try:
                     await conn.quit()
                 except Exception as e:
-                    logger.debug(
-                        "connection_close_error",
-                        extra={"error": str(e)}
-                    )
+                    logger.debug("connection_close_error", extra={"error": str(e)})
             self._in_use.clear()
 
 
@@ -298,7 +291,7 @@ class AsyncConnectionPool:
 
     def __init__(self, pool: SMTPConnectionPool):
         self.pool = pool
-        self._conn: Optional[aiosmtplib.SMTP] = None
+        self._conn: aiosmtplib.SMTP | None = None
 
     async def __aenter__(self) -> aiosmtplib.SMTP:
         self._conn = await self.pool.acquire()

@@ -38,7 +38,6 @@ from .connection_pool import (
     AsyncConnectionPool,
     ConnectionPoolException,
     SMTPConnectionPool,
-    SMTPServerConfig,
     SMTPServerRuntime,
 )
 from .exceptions import (
@@ -61,18 +60,21 @@ from .retry_queue import (
 )
 from .sender import (
     AsyncSMTPSender,
+    LoadBalancingStrategy,
+)
+from .types import (
     BulkSendResult,
     EmailResult,
-    LoadBalancingStrategy,
+    SMTPServerConfig,
 )
 from .types import (
     SMTPServerConfig as ServerConfig,  # Alias for backwards compat
 )
 from .validation import (
+    sanitize_header_value,
+    sanitize_subject,
     validate_email_address,
     validate_email_list,
-    sanitize_subject,
-    sanitize_header_value,
 )
 
 __version__ = "1.0.0"
@@ -109,4 +111,9 @@ __all__ = [
     "SMTPRateLimitError",
     "SMTPSendError",
     "ConnectionPoolException",
+    # Validation
+    "validate_email_address",
+    "validate_email_list",
+    "sanitize_subject",
+    "sanitize_header_value",
 ]

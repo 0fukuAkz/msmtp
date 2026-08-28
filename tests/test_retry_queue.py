@@ -2,7 +2,7 @@
 
 import asyncio
 import heapq
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -10,11 +10,11 @@ from msmtp.retry_queue import RetryConfig, RetryItem, RetryQueue, RetryStatus
 
 
 def _past(seconds: float = 1.0) -> datetime:
-    return datetime.now(UTC) - timedelta(seconds=seconds)
+    return datetime.now(timezone.utc) - timedelta(seconds=seconds)
 
 
 def _future(seconds: float = 60.0) -> datetime:
-    return datetime.now(UTC) + timedelta(seconds=seconds)
+    return datetime.now(timezone.utc) + timedelta(seconds=seconds)
 
 
 class TestRetryItem:
@@ -27,11 +27,11 @@ class TestRetryItem:
         item = RetryItem(id="a", data={})
         item.attempt = 0
         item.calculate_next_retry(base_delay=1.0, max_delay=300.0)
-        delay0 = (item.next_retry_at - datetime.now(UTC)).total_seconds()
+        delay0 = (item.next_retry_at - datetime.now(timezone.utc)).total_seconds()
 
         item.attempt = 3
         item.calculate_next_retry(base_delay=1.0, max_delay=300.0)
-        delay3 = (item.next_retry_at - datetime.now(UTC)).total_seconds()
+        delay3 = (item.next_retry_at - datetime.now(timezone.utc)).total_seconds()
 
         # attempt=3 -> base 8s (before jitter) vs attempt=0 -> base 1s (before jitter);
         # even with jitter (0.5x-1.5x) the higher attempt should almost always be larger.
@@ -41,7 +41,7 @@ class TestRetryItem:
         item = RetryItem(id="a", data={})
         item.attempt = 20  # Would be enormous without capping.
         item.calculate_next_retry(base_delay=1.0, max_delay=10.0)
-        delay = (item.next_retry_at - datetime.now(UTC)).total_seconds()
+        delay = (item.next_retry_at - datetime.now(timezone.utc)).total_seconds()
         assert delay <= 15.0  # 10.0 * max jitter (1.5)
 
     def test_to_dict_roundtrip_fields(self):

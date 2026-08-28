@@ -1,6 +1,6 @@
 """Integration-style tests: multi-server failover and circuit breaker recovery."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import aiosmtplib
@@ -86,8 +86,9 @@ class TestCircuitBreakerRecovery:
         bad_mock = _make_mock_smtp()
         bad_mock.connect = AsyncMock(side_effect=OSError("connection refused"))
 
-        with patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=bad_mock), patch(
-            "msmtp.sender.asyncio.sleep", new=AsyncMock()
+        with (
+            patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=bad_mock),
+            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([server], max_retries=1) as sender:
                 pool = sender._pools["s1"]
@@ -116,7 +117,7 @@ class TestCircuitBreakerRecovery:
         assert cb.is_available() is False
 
         # Simulate the timeout window having elapsed.
-        cb._stats.opened_at = datetime.now(UTC) - timedelta(
+        cb._stats.opened_at = datetime.now(timezone.utc) - timedelta(
             seconds=cb.config.timeout_seconds + 1
         )
 
@@ -142,7 +143,7 @@ class TestCircuitBreakerRecovery:
         cb = pool.runtime.circuit_breaker
 
         cb.force_open()
-        cb._stats.opened_at = datetime.now(UTC) - timedelta(
+        cb._stats.opened_at = datetime.now(timezone.utc) - timedelta(
             seconds=cb.config.timeout_seconds + 1
         )
         assert cb.is_available() is True

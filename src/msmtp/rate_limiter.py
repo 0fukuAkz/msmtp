@@ -1,10 +1,10 @@
 """Rate limiter with token bucket algorithm."""
 
 import asyncio
-import time
-from typing import Optional
-from dataclasses import dataclass
 import logging
+import time
+from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +32,11 @@ class TokenBucket:
         """
         self.rate = rate
         self.capacity = capacity
-        self.tokens = capacity
+        self.tokens: float = capacity
         self.last_update = time.monotonic()
         self._lock = asyncio.Lock()
 
-    async def acquire(self, tokens: int = 1, timeout: Optional[float] = None) -> bool:
+    async def acquire(self, tokens: int = 1, timeout: float | None = None) -> bool:
         """
         Acquire tokens, blocking if necessary.
 
@@ -109,7 +109,7 @@ class TokenBucket:
                 return True
             return False
 
-    def _refill(self):
+    def _refill(self) -> None:
         """Refill tokens based on elapsed time."""
         now = time.monotonic()
         elapsed = now - self.last_update
@@ -121,7 +121,7 @@ class TokenBucket:
 class RateLimiter:
     """Composite rate limiter supporting multiple time windows."""
 
-    def __init__(self, config: Optional[RateLimiterConfig] = None):
+    def __init__(self, config: RateLimiterConfig | None = None):
         """
         Initialize rate limiter.
 
@@ -129,8 +129,8 @@ class RateLimiter:
             config: Rate limiter configuration
         """
         self.config = config or RateLimiterConfig()
-        self.stats = {"total_acquired": 0, "total_waited": 0}
-        self.buckets = {}
+        self.stats: dict[str, int] = {"total_acquired": 0, "total_waited": 0}
+        self.buckets: dict[str, TokenBucket] = {}
 
         # Create buckets for each rate limit
         if self.config.per_second > 0:
@@ -151,7 +151,7 @@ class RateLimiter:
                 capacity=max(1, min(int(self.config.per_hour / 60), self.config.burst_size)),
             )
 
-    async def acquire(self, timeout: Optional[float] = None) -> bool:
+    async def acquire(self, timeout: float | None = None) -> bool:
         """
         Acquire rate limit permission.
 
@@ -179,7 +179,7 @@ class RateLimiter:
         self.stats["total_acquired"] += 1
         return True
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, int]:
         """Get rate limiter statistics."""
         return self.stats
 
@@ -200,7 +200,7 @@ class RateLimiter:
         return True
 
     @classmethod
-    def from_config(cls, config: dict) -> "RateLimiter":
+    def from_config(cls, config: dict[str, Any]) -> "RateLimiter":
         """Create from config dictionary."""
         return cls(
             RateLimiterConfig(
@@ -215,7 +215,7 @@ class RateLimiter:
 class AdaptiveRateLimiter(RateLimiter):
     """Rate limiter that adapts based on server responses."""
 
-    def __init__(self, config: Optional[RateLimiterConfig] = None):
+    def __init__(self, config: RateLimiterConfig | None = None):
         super().__init__(config)
         self.adjustment_factor = 1.0
         self.min_factor = 0.1
@@ -223,7 +223,7 @@ class AdaptiveRateLimiter(RateLimiter):
         self.consecutive_successes = 0
         self.consecutive_failures = 0
 
-    def record_success(self):
+    def record_success(self) -> None:
         """Record successful request."""
         self.consecutive_successes += 1
         self.consecutive_failures = 0
@@ -233,7 +233,7 @@ class AdaptiveRateLimiter(RateLimiter):
             self.adjustment_factor = min(self.max_factor, self.adjustment_factor * 1.1)
             self.consecutive_successes = 0
 
-    def record_rate_limit(self):
+    def record_rate_limit(self) -> None:
         """Record rate limit hit."""
         self.consecutive_failures += 1
         self.consecutive_successes = 0
@@ -241,7 +241,7 @@ class AdaptiveRateLimiter(RateLimiter):
         # Quickly reduce rate on failures
         self.adjustment_factor = max(self.min_factor, self.adjustment_factor * 0.5)
 
-    async def acquire(self, timeout: Optional[float] = None) -> bool:
+    async def acquire(self, timeout: float | None = None) -> bool:
         """Acquire with adaptive timing."""
         result = await super().acquire(timeout)
 
