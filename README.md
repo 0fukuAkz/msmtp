@@ -16,12 +16,12 @@ Extracted from [MerCury](https://github.com/0fukuAkz/MerCury), a production emai
 ## Installation
 
 ```bash
-pip install mercury-smtp
+pip install msmtp
 ```
 
 **With Redis support** (for distributed rate limiting):
 ```bash
-pip install mercury-smtp[redis]
+pip install msmtp[redis]
 ```
 
 ---
@@ -32,7 +32,7 @@ pip install mercury-smtp[redis]
 
 ```python
 import asyncio
-from mercury_smtp import AsyncSMTPSender, SMTPServerConfig
+from msmtp import AsyncSMTPSender, SMTPServerConfig
 
 # Configure SMTP server
 server = SMTPServerConfig(
@@ -60,7 +60,7 @@ asyncio.run(send_email())
 ### Production Configuration
 
 ```python
-from mercury_smtp import (
+from msmtp import (
     AsyncSMTPSender,
     SMTPServerConfig,
     CircuitBreakerConfig,
@@ -129,7 +129,7 @@ asyncio.run(send_bulk())
 Maintains persistent SMTP connections per server with automatic health checks:
 
 ```python
-from mercury_smtp import SMTPConnectionPool
+from msmtp import SMTPConnectionPool
 
 pool = SMTPConnectionPool(
     server=server,
@@ -152,7 +152,7 @@ async with pool.acquire() as conn:
 Prevents cascading failures by temporarily disabling failing servers:
 
 ```python
-from mercury_smtp import CircuitBreakerConfig
+from msmtp import CircuitBreakerConfig
 
 config = CircuitBreakerConfig(
     failure_threshold=5,       # Open after 5 failures
@@ -172,7 +172,7 @@ config = CircuitBreakerConfig(
 Token bucket algorithm for precise send-rate control:
 
 ```python
-from mercury_smtp import RateLimiterConfig
+from msmtp import RateLimiterConfig
 
 limiter = RateLimiterConfig(
     per_second=10.0,   # 10 emails/second
@@ -191,7 +191,7 @@ limiter = RateLimiterConfig(
 Automatic retry with exponential backoff for transient errors:
 
 ```python
-from mercury_smtp import RetryConfig
+from msmtp import RetryConfig
 
 retry = RetryConfig(
     max_attempts=3,
@@ -238,7 +238,7 @@ See [docs/Performance.md](docs/Performance.md) for detailed benchmarks.
 ### Custom Error Handling
 
 ```python
-from mercury_smtp import SMTPError, SMTPAuthenticationError
+from msmtp import SMTPError, SMTPAuthenticationError
 
 async def send_with_retry():
     try:
@@ -254,7 +254,7 @@ async def send_with_retry():
 ### Metrics Integration
 
 ```python
-from mercury_smtp import AsyncSMTPSender
+from msmtp import AsyncSMTPSender
 
 class MetricsSender(AsyncSMTPSender):
     async def _record_send(self, result):
@@ -266,7 +266,7 @@ class MetricsSender(AsyncSMTPSender):
 ### Server Selection Strategy
 
 ```python
-from mercury_smtp import LoadBalancingStrategy
+from msmtp import LoadBalancingStrategy
 
 sender = AsyncSMTPSender(
     servers=servers,
@@ -283,7 +283,7 @@ sender = AsyncSMTPSender(
 pytest
 
 # With coverage
-pytest --cov=mercury_smtp --cov-report=html
+pytest --cov=msmtp --cov-report=html
 
 # Async tests
 pytest tests/test_sender.py -v
@@ -318,7 +318,7 @@ pytest tests/test_sender.py -v
 
 ## Comparison
 
-| Feature | mercury-smtp | aiosmtplib | smtplib |
+| Feature | msmtp | aiosmtplib | smtplib |
 |---------|--------------|------------|---------|
 | Async | ✅ | ✅ | ❌ |
 | Connection pooling | ✅ | ❌ | ❌ |
@@ -352,5 +352,5 @@ MIT License - see [LICENSE](../LICENSE) for details.
 ## Support
 
 - 📖 [Documentation](docs/)
-- 🐛 [Issue Tracker](https://github.com/0fukuAkz/MerCury/issues)
-- 💬 [Discussions](https://github.com/0fukuAkz/MerCury/discussions)
+- 🐛 [Issue Tracker](https://github.com/0fukuAkz/msmtp/issues)
+- 💬 [Discussions](https://github.com/0fukuAkz/msmtp/discussions)
