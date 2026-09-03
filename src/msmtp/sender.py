@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import random
 import time
+import uuid
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
@@ -102,6 +104,8 @@ class AsyncSMTPSender:
 
     async def __aenter__(self) -> "AsyncSMTPSender":
         """Enter async context."""
+        self._retry_queue.handler = self._retry_handler
+        await self._retry_queue.start()
         logger.info(
             "smtp_sender_initialized",
             extra={
@@ -133,6 +137,7 @@ class AsyncSMTPSender:
         bcc: list[str] | None = None,
         reply_to: str | None = None,
         headers: dict[str, str] | None = None,
+        _queue_id: str | None = None,
     ) -> EmailResult:
         """
         Send a single email.
@@ -194,6 +199,7 @@ class AsyncSMTPSender:
         )
 
         # Try to send
+        pool: SMTPConnectionPool | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
                 # Apply rate limiting
@@ -263,13 +269,13 @@ class AsyncSMTPSender:
 
             except (aiosmtplib.SMTPAuthenticationError, SMTPAuthenticationError) as e:
                 # Auth errors are permanent
-                if "pool" in locals():
+                if pool is not None:
                     pool.runtime.circuit_breaker.record_failure(e)
                 logger.error(
                     "smtp_authentication_failed",
                     extra={
-                        "server": pool.server.name if "pool" in locals() else "unknown",
-                        "username": pool.server.username if "pool" in locals() else None,
+                        "server": pool.server.name if pool is not None else "unknown",
+                        "username": pool.server.username if pool is not None else None,
                         "error": str(e),
                     },
                 )
@@ -282,7 +288,7 @@ class AsyncSMTPSender:
                 )
 
             except Exception as e:
-                if "pool" in locals():
+                if pool is not None:
                     pool.runtime.circuit_breaker.record_failure(e)
                 logger.warning(
                     "smtp_send_attempt_failed",
@@ -298,6 +304,26 @@ class AsyncSMTPSender:
 
                 # Check if transient
                 if not is_transient_error(e) or attempt >= self.max_retries:
+                    # Queue for background retry when transient retries are exhausted
+                    # and this send was not itself triggered by the retry queue.
+                    if is_transient_error(e) and _queue_id is None:
+                        retry_id = str(uuid.uuid4())
+                        await self._retry_queue.add(
+                            retry_id,
+                            {
+                                "_queue_id": retry_id,
+                                "from_addr": from_addr,
+                                "to_addrs": to_addrs,
+                                "subject": subject,
+                                "body_text": body_text,
+                                "body_html": body_html,
+                                "cc": cc,
+                                "bcc": bcc,
+                                "reply_to": reply_to,
+                                "headers": headers,
+                            },
+                            str(e),
+                        )
                     return EmailResult(
                         success=False,
                         error=str(e),
@@ -379,6 +405,11 @@ class AsyncSMTPSender:
         if not available:
             raise SMTPConnectionError("No available SMTP servers")
 
+        # Prefer servers pinned to this sender address
+        pinned = [p for p in available if p.server.from_email == from_addr]
+        if pinned:
+            available = pinned
+
         # Priority strategy
         if self.strategy == LoadBalancingStrategy.PRIORITY:
             # Sort by priority (ascending)
@@ -388,8 +419,6 @@ class AsyncSMTPSender:
         # Weighted strategy
         if self.strategy == LoadBalancingStrategy.WEIGHTED:
             # Simple weighted random
-            import random
-
             total_weight = sum(p.server.weight for p in available)
             if total_weight == 0:
                 return available[0]
@@ -407,6 +436,11 @@ class AsyncSMTPSender:
         pool = available[self._round_robin_index % len(available)]
         self._round_robin_index += 1
         return pool
+
+    async def _retry_handler(self, data: dict[str, Any]) -> bool:
+        """Process a retry queue item by re-attempting the send."""
+        result = await self.send(**data)
+        return result.success
 
     def _build_message(
         self,
@@ -457,6 +491,7 @@ class AsyncSMTPSender:
 
     async def close(self) -> None:
         """Close all connection pools and cleanup resources."""
+        await self._retry_queue.stop()
         logger.info(
             "smtp_sender_closing",
             extra={

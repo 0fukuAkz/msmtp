@@ -33,6 +33,9 @@ htmlcov/
 .dmypy.json
 dmypy.json
 
+# Linting
+.ruff_cache/
+
 # Environments
 .env
 .venv
@@ -51,4 +54,5 @@ venv.bak/
 
 # OS
 .DS_Store
+._*
 Thumbs.db

@@ -4,6 +4,9 @@ import asyncio
 import heapq
 import json
 import logging
+import os
+import random
+import shutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -40,9 +43,6 @@ class RetryItem:
     def calculate_next_retry(self, base_delay: float = 1.0, max_delay: float = 300.0) -> None:
         """Calculate next retry time with exponential backoff."""
         delay = min(base_delay * (2**self.attempt), max_delay)
-        # Add jitter
-        import random
-
         delay *= 0.5 + random.random()
         self.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
 
@@ -91,7 +91,7 @@ class RetryQueue:
         self.handler = handler
         self.persist_path = persist_path
 
-        self._queue: list[RetryItem] = []
+        self._queue: list[tuple[datetime, str]] = []  # (next_retry_at, item_id)
         self._items: dict[str, RetryItem] = {}
         self._lock = asyncio.Lock()
         self._running = False
@@ -124,14 +124,11 @@ class RetryQueue:
                     logger.warning(f"Retry exhausted for {id} after {item.attempt} attempts")
                 else:
                     item.calculate_next_retry(self.config.base_delay, self.config.max_delay)
-                    # FIX: Do not push to heap again if already in queue.
-                    # The item is modified in-place (reference), so when it pops from heap
-                    # it will have the new next_retry_at.
-                    # However, heapq doesn't re-sort when items change.
-                    # We need to re-heapify or accept that the order might be slightly stale
-                    # until it pops. Efficient approach: remove and re-add or lazy delete.
-                    # Given the constraints, we will re-push but handle duplicates in get_ready.
-                    heapq.heappush(self._queue, item)
+                    # Push a (scheduled_time, id) tuple. get_ready() skips any entry
+                    # whose timestamp no longer matches the item's current next_retry_at,
+                    # so each reschedule effectively invalidates the previous heap entry
+                    # without an O(n) remove. Heap size is bounded by unique live items.
+                    heapq.heappush(self._queue, (item.next_retry_at, item.id))
                     self.stats["total_retried"] += 1
             else:
                 item = RetryItem(
@@ -139,7 +136,7 @@ class RetryQueue:
                 )
                 item.calculate_next_retry(self.config.base_delay, self.config.max_delay)
                 self._items[id] = item
-                heapq.heappush(self._queue, item)
+                heapq.heappush(self._queue, (item.next_retry_at, item.id))
                 self.stats["total_added"] += 1
 
             # FIX: Await non-blocking persistence
@@ -152,32 +149,25 @@ class RetryQueue:
         ready = []
 
         async with self._lock:
-            # Clean up the queue from stale references and check timing
             while self._queue:
-                # Peek first
-                if self._queue[0].next_retry_at > now:
+                if self._queue[0][0] > now:
                     break
 
-                item = heapq.heappop(self._queue)
+                scheduled_at, item_id = heapq.heappop(self._queue)
 
-                # FIX: Verify item is still valid and active
-                if item.id not in self._items:
+                item = self._items.get(item_id)
+                if item is None:
+                    continue  # Already succeeded or exhausted
+
+                # Stale heap entry: item was rescheduled after this entry was pushed.
+                # The current next_retry_at won't match, so skip and let the newer
+                # entry fire when its time comes.
+                if item.next_retry_at != scheduled_at:
                     continue
 
-                # Fix: Check if this is the latest reference (optimization) or just use state
-                if item.status == RetryStatus.EXHAUSTED:
+                if item.status in (RetryStatus.EXHAUSTED, RetryStatus.RETRYING):
                     continue
 
-                # Skip items already in-flight. add() pushes a duplicate
-                # heap entry when called on an existing id (lazy-delete
-                # strategy); without this guard a stale entry can be popped
-                # while the same item is still being processed by an
-                # earlier handler invocation — handler runs twice, the
-                # recipient receives the email twice.
-                if item.status == RetryStatus.RETRYING:
-                    continue
-
-                # Prepare for retry
                 item.status = RetryStatus.RETRYING
                 ready.append(item)
 
@@ -285,8 +275,6 @@ class RetryQueue:
             temp_path = f"{self.persist_path}.tmp"
             with open(temp_path, "w") as f:
                 json.dump(state, f)
-            import shutil
-
             shutil.move(temp_path, self.persist_path or "")
         except Exception as e:
             logger.error(f"Disk write error in retry queue: {e}")
@@ -298,8 +286,6 @@ class RetryQueue:
             return
 
         try:
-            import os
-
             if not os.path.exists(self.persist_path):
                 return
 
@@ -320,7 +306,7 @@ class RetryQueue:
 
                 if item.status not in [RetryStatus.SUCCESS, RetryStatus.EXHAUSTED]:
                     self._items[item.id] = item
-                    heapq.heappush(self._queue, item)
+                    heapq.heappush(self._queue, (item.next_retry_at, item.id))
 
             self.stats = state.get("stats", self.stats)
             logger.info(f"Loaded {len(self._items)} items from retry queue")

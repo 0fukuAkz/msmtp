@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Automatic retry for transient errors (network, timeouts)
   - Exponential backoff with jitter
   - Configurable retry limits and delays
-  - Dead letter queue for permanent failures
+  - Background retry queue with exponential backoff for sends that exhaust immediate retries
   
 - **Performance:**
   - Connection reuse (reduces TLS handshake overhead)

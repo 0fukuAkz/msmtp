@@ -6,6 +6,7 @@ import ssl
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from types import TracebackType
 
 import aiosmtplib
 
@@ -297,6 +298,11 @@ class AsyncConnectionPool:
         self._conn = await self.pool.acquire()
         return self._conn
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):  # type: ignore[no-untyped-def]
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         if self._conn:
             await self.pool.release(self._conn)
