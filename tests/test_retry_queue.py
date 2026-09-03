@@ -90,7 +90,7 @@ class TestGetReady:
         queue = RetryQueue()
         item = RetryItem(id="a", data={}, next_retry_at=_future())
         queue._items["a"] = item
-        heapq.heappush(queue._queue, item)
+        heapq.heappush(queue._queue, (item.next_retry_at, item.id))
 
         assert await queue.get_ready() == []
 
@@ -98,7 +98,7 @@ class TestGetReady:
         queue = RetryQueue()
         item = RetryItem(id="a", data={}, next_retry_at=_past())
         queue._items["a"] = item
-        heapq.heappush(queue._queue, item)
+        heapq.heappush(queue._queue, (item.next_retry_at, item.id))
 
         ready = await queue.get_ready()
 
@@ -109,9 +109,9 @@ class TestGetReady:
         queue = RetryQueue()
         item = RetryItem(id="a", data={}, next_retry_at=_past())
         queue._items["a"] = item
-        # Simulate the lazy-delete duplicate: same item pushed twice.
-        heapq.heappush(queue._queue, item)
-        heapq.heappush(queue._queue, item)
+        # Same timestamp pushed twice; second pop sees status=RETRYING and skips.
+        heapq.heappush(queue._queue, (item.next_retry_at, item.id))
+        heapq.heappush(queue._queue, (item.next_retry_at, item.id))
 
         ready = await queue.get_ready()
 
@@ -120,7 +120,7 @@ class TestGetReady:
     async def test_skips_items_removed_from_items_dict(self):
         queue = RetryQueue()
         item = RetryItem(id="a", data={}, next_retry_at=_past())
-        heapq.heappush(queue._queue, item)  # Note: not added to _items.
+        heapq.heappush(queue._queue, (item.next_retry_at, item.id))  # not in _items
 
         assert await queue.get_ready() == []
 
@@ -128,7 +128,7 @@ class TestGetReady:
         queue = RetryQueue()
         item = RetryItem(id="a", data={}, next_retry_at=_past(), status=RetryStatus.EXHAUSTED)
         queue._items["a"] = item
-        heapq.heappush(queue._queue, item)
+        heapq.heappush(queue._queue, (item.next_retry_at, item.id))
 
         assert await queue.get_ready() == []
 
