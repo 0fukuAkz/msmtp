@@ -296,18 +296,9 @@ class TestSendRetryBehavior:
         assert result.success is False
         assert "Send errors" in result.error
 
-    async def test_zero_max_retries_returns_fallback_result(self, smtp_server):
-        async with AsyncSMTPSender([smtp_server], max_retries=0) as sndr:
-            result = await sndr.send(
-                from_addr="sender@example.com",
-                to_addrs=["to@example.com"],
-                subject="Hi",
-                body_text="hi",
-            )
-
-        assert result.success is False
-        assert result.error == "Max retries exceeded"
-        assert result.attempts == 0
+    def test_zero_max_retries_raises_value_error(self, smtp_server):
+        with pytest.raises(ValueError, match="max_retries must be >= 1"):
+            AsyncSMTPSender([smtp_server], max_retries=0)
 
     async def test_connection_failure_trips_circuit_breaker(self, smtp_server, mock_smtp):
         mock_smtp.connect = AsyncMock(side_effect=OSError("connection refused"))

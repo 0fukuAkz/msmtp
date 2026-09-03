@@ -89,11 +89,11 @@ def validate_email_list(emails: list[str]) -> None:
     Raises:
         ValueError: If any email is invalid
     """
-    if not emails:
-        raise ValueError("Email list cannot be empty")
-
     if not isinstance(emails, list):
         raise ValueError("Emails must be provided as a list")
+
+    if not emails:
+        raise ValueError("Email list cannot be empty")
 
     for email in emails:
         validate_email_address(email)

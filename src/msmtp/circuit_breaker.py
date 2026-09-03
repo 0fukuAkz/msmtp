@@ -254,9 +254,17 @@ class CircuitBreaker:
         self._stats.success_count = 0
         self._recent_failures.clear()
 
+    def _peek_state(self) -> CircuitState:
+        """Return what the current state would be without mutating it."""
+        if self._stats.state == CircuitState.OPEN and self._stats.opened_at:
+            elapsed = (datetime.now(timezone.utc) - self._stats.opened_at).total_seconds()
+            if elapsed >= self.config.timeout_seconds:
+                return CircuitState.HALF_OPEN
+        return self._stats.state
+
     def get_stats(self) -> dict[str, Any]:
         """Get circuit breaker statistics."""
-        current_state = self._get_current_state()
+        current_state = self._peek_state()  # read-only — does not trigger transitions
 
         stats = self._stats.to_dict()
         stats["state"] = current_state.value  # Get current state

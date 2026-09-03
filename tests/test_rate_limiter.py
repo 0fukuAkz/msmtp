@@ -151,13 +151,31 @@ class TestAdaptiveRateLimiter:
 
     @pytest.mark.asyncio
     async def test_acquire_adds_extra_delay_on_failure(self):
+        # Extra adaptive delay only fires when no timeout is given (timeout=None).
+        # Passing a timeout would violate the timeout contract by sleeping after
+        # the deadline has already been missed.
         limiter = AdaptiveRateLimiter(RateLimiterConfig(per_second=1000, burst_size=50))
         bucket = limiter.buckets["second"]
         bucket.tokens = 0
         bucket.rate = 0  # Force RateLimiter.acquire() to return False deterministically.
 
         with patch("msmtp.rate_limiter.asyncio.sleep", new=AsyncMock()) as mock_sleep:
-            result = await limiter.acquire(timeout=0.01)
+            result = await limiter.acquire(timeout=None)
 
         assert result is False
         mock_sleep.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_acquire_no_extra_delay_when_timeout_set(self):
+        # With an explicit timeout the adaptive sleep must be skipped so we don't
+        # violate the timeout contract.
+        limiter = AdaptiveRateLimiter(RateLimiterConfig(per_second=1000, burst_size=50))
+        bucket = limiter.buckets["second"]
+        bucket.tokens = 0
+        bucket.rate = 0
+
+        with patch("msmtp.rate_limiter.asyncio.sleep", new=AsyncMock()) as mock_sleep:
+            result = await limiter.acquire(timeout=0.01)
+
+        assert result is False
+        mock_sleep.assert_not_awaited()

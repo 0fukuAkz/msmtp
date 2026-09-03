@@ -188,8 +188,9 @@ class RateLimiter:
         if not self.buckets:
             return True
 
-        # Check all buckets first
+        # Refill then check all buckets before acquiring any
         for bucket in self.buckets.values():
+            bucket._refill()
             if bucket.tokens < 1:
                 return False
 
@@ -245,8 +246,8 @@ class AdaptiveRateLimiter(RateLimiter):
         """Acquire with adaptive timing."""
         result = await super().acquire(timeout)
 
-        if not result and self.adjustment_factor > self.min_factor:
-            # Add extra delay on rate limit
+        if not result and self.adjustment_factor > self.min_factor and timeout is None:
+            # Extra delay only when caller hasn't set a timeout budget
             await asyncio.sleep(1.0 / self.adjustment_factor)
 
         return result

@@ -139,9 +139,9 @@ class RetryQueue:
                 heapq.heappush(self._queue, (item.next_retry_at, item.id))
                 self.stats["total_added"] += 1
 
-            # FIX: Await non-blocking persistence
-            await self._persist_state()
-            return item
+        # Persist outside the lock so asyncio.to_thread doesn't block queue access
+        await self._persist_state()
+        return item
 
     async def get_ready(self) -> list[RetryItem]:
         """Get items ready for retry."""

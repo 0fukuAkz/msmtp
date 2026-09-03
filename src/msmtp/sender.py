@@ -7,7 +7,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from email.message import EmailMessage
-from email.utils import formatdate, make_msgid
+from email.utils import formatdate, make_msgid, parseaddr
 from enum import Enum
 from types import TracebackType
 from typing import Any
@@ -80,14 +80,23 @@ class AsyncSMTPSender:
             max_retries: Maximum retry attempts
             strategy: Load balancing strategy
         """
+        if max_retries < 1:
+            raise ValueError(f"max_retries must be >= 1, got {max_retries}")
+
         self.servers = servers
         self.strategy = strategy
         self.max_retries = max_retries
 
-        # Create connection pools per server
+        # Create connection pools per server — duplicate names are a config error
         self._pools: dict[str, SMTPConnectionPool] = {}
         for server in servers:
-            self._pools[server.name or server.host] = SMTPConnectionPool(server)
+            key = server.name or server.host
+            if key in self._pools:
+                raise ValueError(
+                    f"Duplicate SMTP server key '{key}'. "
+                    "Assign unique names to servers sharing the same host."
+                )
+            self._pools[key] = SMTPConnectionPool(server)
 
         # Rate limiter (optional)
         self._rate_limiter: RateLimiter | None = None
@@ -202,11 +211,8 @@ class AsyncSMTPSender:
         pool: SMTPConnectionPool | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                # Apply rate limiting
-                if self._rate_limiter:
-                    await self._rate_limiter.acquire()
-
-                # Select server
+                # Select server first so we don't consume rate-limit tokens for
+                # a send we can't attempt (all circuits open, no servers available)
                 pool = self._select_server(from_addr)
 
                 # Check circuit breaker
@@ -218,6 +224,10 @@ class AsyncSMTPSender:
                         f"failures: {cb_stats.get('failure_count', 0)}, "
                         f"recent errors: {error_context or 'none'}"
                     )
+
+                # Apply rate limiting after confirming a server is available
+                if self._rate_limiter:
+                    await self._rate_limiter.acquire()
 
                 # Get connection and send
                 async with AsyncConnectionPool(pool) as smtp:
@@ -306,7 +316,11 @@ class AsyncSMTPSender:
                 if not is_transient_error(e) or attempt >= self.max_retries:
                     # Queue for background retry when transient retries are exhausted
                     # and this send was not itself triggered by the retry queue.
-                    if is_transient_error(e) and _queue_id is None:
+                    if (
+                        is_transient_error(e)
+                        and _queue_id is None
+                        and self._retry_queue.handler is not None
+                    ):
                         retry_id = str(uuid.uuid4())
                         await self._retry_queue.add(
                             retry_id,
@@ -336,8 +350,8 @@ class AsyncSMTPSender:
                 backoff = 2 ** (attempt - 1)  # 1s, 2s, 4s, ...
                 await asyncio.sleep(backoff)
 
-        # Max retries exceeded
-        return EmailResult(
+        # Unreachable: the loop always returns. Kept for type-checker completeness.
+        return EmailResult(  # pragma: no cover
             success=False,
             error="Max retries exceeded",
             recipient=to_addrs[0] if to_addrs else None,
@@ -369,11 +383,22 @@ class AsyncSMTPSender:
             async with sem:
                 return await self.send(**email)
 
-        # Send all emails
-        results = await asyncio.gather(
+        # Send all emails; return_exceptions=True so one failure doesn't cancel the rest
+        raw = await asyncio.gather(
             *[send_with_semaphore(email) for email in emails],
-            return_exceptions=False,
+            return_exceptions=True,
         )
+        results: list[EmailResult] = [
+            r
+            if isinstance(r, EmailResult)
+            else EmailResult(
+                success=False,
+                error=f"Unexpected error: {r}",
+                attempts=0,
+                timestamp=datetime.now(timezone.utc),
+            )
+            for r in raw
+        ]
 
         # Aggregate results
         success_count = sum(1 for r in results if r.success)
@@ -405,8 +430,9 @@ class AsyncSMTPSender:
         if not available:
             raise SMTPConnectionError("No available SMTP servers")
 
-        # Prefer servers pinned to this sender address
-        pinned = [p for p in available if p.server.from_email == from_addr]
+        # Prefer servers pinned to this sender; strip display name ("Alice <a@b.com>" → "a@b.com")
+        _, sender_addr = parseaddr(from_addr)
+        pinned = [p for p in available if p.server.from_email == (sender_addr or from_addr)]
         if pinned:
             available = pinned
 
@@ -471,10 +497,10 @@ class AsyncSMTPSender:
         if reply_to:
             msg["Reply-To"] = reply_to
 
-        # Custom headers (sanitized)
+        # Custom headers — sanitize both key and value to prevent injection
         if headers:
             for key, value in headers.items():
-                msg[key] = sanitize_header_value(value)
+                msg[sanitize_header_value(key)] = sanitize_header_value(value)
 
         # Body
         if body_html and body_text:
