@@ -116,6 +116,8 @@ class SMTPConnectionPool:
 
         self._pool: list[aiosmtplib.SMTP] = []
         self._in_use: set[aiosmtplib.SMTP] = set()
+        self._pending_count = 0  # connections being created but not yet in _in_use
+        self._closed = False
         self._lock = asyncio.Lock()
         self._last_health_check = time.monotonic()
 
@@ -142,7 +144,10 @@ class SMTPConnectionPool:
                 pooled = self._pool.pop()  # always SMTP, never None
                 self._in_use.add(pooled)   # account for it immediately
                 candidate = pooled
-            elif len(self._in_use) < self.max_connections:
+            elif len(self._in_use) + self._pending_count < self.max_connections:
+                # Reserve a slot before releasing the lock so concurrent callers
+                # cannot also observe room and all create new connections at once.
+                self._pending_count += 1
                 candidate = None
             else:
                 raise ConnectionPoolException("No connections available")
@@ -160,9 +165,15 @@ class SMTPConnectionPool:
                 pass
             return await self.acquire()
 
-        # create_new path — connection creation outside lock
-        conn = await self._create_connection()
+        # create_new path — TLS handshake outside lock; slot was already reserved
+        try:
+            conn = await self._create_connection()
+        except Exception:
+            async with self._lock:
+                self._pending_count -= 1
+            raise
         async with self._lock:
+            self._pending_count -= 1
             self._in_use.add(conn)
         return conn
 
@@ -176,12 +187,15 @@ class SMTPConnectionPool:
         # Health check outside lock
         if await self._is_healthy(conn):
             async with self._lock:
-                self._pool.append(conn)
-        else:
-            try:
-                await conn.quit()
-            except Exception:
-                pass
+                if not self._closed:
+                    # Guard against a shutdown that completed while the health
+                    # check was in flight — don't re-insert into a dead pool.
+                    self._pool.append(conn)
+                    return
+        try:
+            await conn.quit()
+        except Exception:
+            pass
 
     async def _create_connection(self) -> aiosmtplib.SMTP:
         """Create a new SMTP connection with SSL verification."""
@@ -287,19 +301,17 @@ class SMTPConnectionPool:
         )
 
         async with self._lock:
-            for conn in self._pool:
-                try:
-                    await conn.quit()
-                except Exception as e:
-                    logger.debug("connection_close_error", extra={"error": str(e)})
+            self._closed = True
+            to_close = list(self._pool) + list(self._in_use)
             self._pool.clear()
-
-            for conn in self._in_use:
-                try:
-                    await conn.quit()
-                except Exception as e:
-                    logger.debug("connection_close_error", extra={"error": str(e)})
             self._in_use.clear()
+
+        # Close connections outside lock so we don't block concurrent release() calls
+        for conn in to_close:
+            try:
+                await conn.quit()
+            except Exception as e:
+                logger.debug("connection_close_error", extra={"error": str(e)})
 
 
 class AsyncConnectionPool:

@@ -88,13 +88,16 @@ class CircuitBreaker:
 
         # Rolling window for failure tracking
         self._recent_failures: list[datetime] = []
+        # Only one probe request is allowed through while in HALF_OPEN; all
+        # others are held back until the probe succeeds or fails.
+        self._half_open_probe_in_flight = False
 
     def is_available(self) -> bool:
         """
         Check if circuit allows operations.
 
         Returns:
-            True if circuit is closed or half-open
+            True if circuit is closed or half-open (and no probe in flight)
         """
         current_state = self._get_current_state()
 
@@ -109,6 +112,13 @@ class CircuitBreaker:
                 },
             )
             return False
+
+        if current_state == CircuitState.HALF_OPEN:
+            if self._half_open_probe_in_flight:
+                # Allow only one probe at a time; block all other callers until
+                # the probe outcome is recorded via record_success/record_failure.
+                return False
+            self._half_open_probe_in_flight = True
 
         return True
 
@@ -136,6 +146,7 @@ class CircuitBreaker:
                     self._stats.state = CircuitState.HALF_OPEN
                     self._stats.success_count = 0
                     self._stats.total_trips += 1
+                    self._half_open_probe_in_flight = False  # fresh transition, reset probe gate
                     return CircuitState.HALF_OPEN
             return CircuitState.OPEN
 
@@ -150,6 +161,7 @@ class CircuitBreaker:
         self._stats.last_success_time = now
 
         if current_state == CircuitState.HALF_OPEN:
+            self._half_open_probe_in_flight = False
             self._stats.success_count += 1
 
             # Close circuit if enough successes
@@ -227,6 +239,7 @@ class CircuitBreaker:
                 self._stats.total_trips += 1
 
         elif current_state == CircuitState.HALF_OPEN:
+            self._half_open_probe_in_flight = False
             # Any failure in half-open immediately opens circuit
             logger.warning(
                 "⚠️  Circuit breaker RE-OPENING for %s (failure during half-open state): %s",
@@ -252,6 +265,7 @@ class CircuitBreaker:
         self._stats.state = CircuitState.CLOSED
         self._stats.failure_count = 0
         self._stats.success_count = 0
+        self._half_open_probe_in_flight = False
         self._recent_failures.clear()
 
     def _peek_state(self) -> CircuitState:
@@ -281,4 +295,5 @@ class CircuitBreaker:
         """Reset circuit breaker to initial state."""
         logger.info(f"🔄 Resetting circuit breaker for {self.server_name}")
         self._stats = CircuitBreakerStats(state=CircuitState.CLOSED)
+        self._half_open_probe_in_flight = False
         self._recent_failures.clear()

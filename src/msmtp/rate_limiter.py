@@ -47,6 +47,10 @@ class TokenBucket:
         Returns:
             True if tokens acquired, False if timeout
         """
+        if tokens > self.capacity:
+            # Can never satisfy — requested tokens exceed the bucket's maximum
+            return False
+
         start_time = time.monotonic()
 
         while True:
@@ -165,6 +169,7 @@ class RateLimiter:
             return True
 
         start_time = time.monotonic()
+        consumed: list[TokenBucket] = []
 
         for name, bucket in self.buckets.items():
             remaining_timeout = None
@@ -173,8 +178,13 @@ class RateLimiter:
                 remaining_timeout = max(0, timeout - elapsed)
 
             if not await bucket.acquire(timeout=remaining_timeout):
+                # Roll back tokens already consumed by earlier buckets so we
+                # don't silently drain them on a failed multi-window acquire.
+                for b in consumed:
+                    b.tokens = min(b.capacity, b.tokens + 1)
                 logger.debug(f"Rate limit hit on {name} bucket")
                 return False
+            consumed.append(bucket)
 
         self.stats["total_acquired"] += 1
         return True

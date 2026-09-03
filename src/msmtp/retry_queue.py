@@ -176,11 +176,13 @@ class RetryQueue:
     async def mark_success(self, id: str) -> None:
         """Mark item as successfully processed."""
         async with self._lock:
-            if id in self._items:
-                self._items[id].status = RetryStatus.SUCCESS
-                self.stats["total_success"] += 1
-                del self._items[id]
-                await self._persist_state()
+            if id not in self._items:
+                return
+            self._items[id].status = RetryStatus.SUCCESS
+            self.stats["total_success"] += 1
+            del self._items[id]
+        # Persist outside the lock (asyncio.to_thread must not hold _lock)
+        await self._persist_state()
 
     async def mark_failed(self, id: str, error: str) -> None:
         """Mark item as failed, will be retried."""

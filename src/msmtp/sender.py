@@ -210,20 +210,15 @@ class AsyncSMTPSender:
         # Try to send
         pool: SMTPConnectionPool | None = None
         for attempt in range(1, self.max_retries + 1):
+            pool = None  # reset each attempt so a failed _select_server on attempt N
+            # does not cause the except block to record a spurious failure on
+            # the server that was selected in attempt N-1
             try:
                 # Select server first so we don't consume rate-limit tokens for
-                # a send we can't attempt (all circuits open, no servers available)
+                # a send we can't attempt (all circuits open, no servers available).
+                # _select_server already filters by circuit breaker availability,
+                # so no second is_available() call is needed here.
                 pool = self._select_server(from_addr)
-
-                # Check circuit breaker
-                if not pool.runtime.circuit_breaker.is_available():
-                    cb_stats = pool.runtime.circuit_breaker.get_stats()
-                    error_context = ", ".join(cb_stats.get("last_error_messages", [])[:3])
-                    raise SMTPConnectionError(
-                        f"Circuit breaker OPEN for {pool.server.name} - "
-                        f"failures: {cb_stats.get('failure_count', 0)}, "
-                        f"recent errors: {error_context or 'none'}"
-                    )
 
                 # Apply rate limiting after confirming a server is available
                 if self._rate_limiter:
