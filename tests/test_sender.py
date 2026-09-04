@@ -296,7 +296,7 @@ class TestSendRetryBehavior:
         assert result.success is False
         assert "Send errors" in result.error
 
-    def test_zero_max_retries_raises_value_error(self, smtp_server):
+    async def test_zero_max_retries_raises_value_error(self, smtp_server):
         with pytest.raises(ValueError, match="max_retries must be >= 1"):
             AsyncSMTPSender([smtp_server], max_retries=0)
 

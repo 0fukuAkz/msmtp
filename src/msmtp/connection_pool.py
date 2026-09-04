@@ -142,7 +142,7 @@ class SMTPConnectionPool:
         async with self._lock:
             if self._pool:
                 pooled = self._pool.pop()  # always SMTP, never None
-                self._in_use.add(pooled)   # account for it immediately
+                self._in_use.add(pooled)  # account for it immediately
                 candidate = pooled
             elif len(self._in_use) + self._pending_count < self.max_connections:
                 # Reserve a slot before releasing the lock so concurrent callers
