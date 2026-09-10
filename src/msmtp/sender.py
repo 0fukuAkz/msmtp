@@ -221,9 +221,10 @@ class AsyncSMTPSender:
             try:
                 # Select server first so we don't consume rate-limit tokens for
                 # a send we can't attempt (all circuits open, no servers available).
-                # _select_server already filters by circuit breaker availability,
-                # so no second is_available() call is needed here.
                 pool = self._select_server(from_addr)
+                # Claim the half-open probe slot only on the server we route to;
+                # _select_server's availability filter never claims it.
+                pool.runtime.circuit_breaker.record_attempt()
 
                 # Apply rate limiting after confirming a server is available
                 if self._rate_limiter:

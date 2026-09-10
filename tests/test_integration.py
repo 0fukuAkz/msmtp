@@ -78,6 +78,27 @@ class TestMultiServerFailover:
         assert result.success is False
         assert "No available SMTP servers" in result.error
 
+    async def test_backup_due_for_probe_still_takes_failover(self):
+        # Regression: the availability filter used to claim the half-open probe
+        # slot on every recovering server it looked at, so a backup it passed over
+        # stayed "probe in flight" forever and failover had nowhere to go.
+        primary = SMTPServerConfig(name="primary", host="primary.example.com", priority=0)
+        backup = SMTPServerConfig(name="backup", host="backup.example.com", priority=1)
+        sender = AsyncSMTPSender([primary, backup], strategy=LoadBalancingStrategy.PRIORITY)
+        backup_cb = sender._pools["backup"].runtime.circuit_breaker
+        backup_cb.force_open()
+        backup_cb._stats.opened_at = datetime.now(timezone.utc) - timedelta(
+            seconds=backup_cb.config.timeout_seconds + 1
+        )
+
+        for _ in range(3):
+            assert sender._select_server("sender@example.com").server.name == "primary"
+
+        sender._pools["primary"].runtime.circuit_breaker.force_open()
+        assert sender._select_server("sender@example.com").server.name == "backup"
+
+        await sender.close()
+
 
 @pytest.mark.asyncio
 class TestCircuitBreakerRecovery:
@@ -176,3 +197,44 @@ class TestCircuitBreakerRecovery:
                 )
 
         assert result.success is True
+
+    async def test_half_open_admits_one_probe_at_a_time(self):
+        server = SMTPServerConfig(name="s1", host="smtp.example.com")
+        sender = AsyncSMTPSender([server])
+        cb = sender._pools["s1"].runtime.circuit_breaker
+        cb.force_open()
+        cb._stats.opened_at = datetime.now(timezone.utc) - timedelta(
+            seconds=cb.config.timeout_seconds + 1
+        )
+
+        # Checking availability never claims the probe slot...
+        assert cb.is_available() is True
+        assert cb.is_available() is True
+        # ...routing a request through the breaker does.
+        cb.record_attempt()
+        assert cb.is_available() is False
+        # Once the probe reports back, the next one may go.
+        cb.record_success()
+        assert cb.is_available() is True
+
+        await sender.close()
+
+    async def test_abandoned_probe_is_presumed_lost_after_timeout(self):
+        # A probe whose send was cancelled never reports an outcome; it must
+        # not wedge the breaker in HALF_OPEN.
+        server = SMTPServerConfig(name="s1", host="smtp.example.com")
+        sender = AsyncSMTPSender([server])
+        cb = sender._pools["s1"].runtime.circuit_breaker
+        cb.force_open()
+        cb._stats.opened_at = datetime.now(timezone.utc) - timedelta(
+            seconds=cb.config.timeout_seconds + 1
+        )
+        cb.record_attempt()
+        assert cb.is_available() is False
+
+        cb._probe_started_at = datetime.now(timezone.utc) - timedelta(
+            seconds=cb.config.timeout_seconds + 1
+        )
+        assert cb.is_available() is True
+
+        await sender.close()
