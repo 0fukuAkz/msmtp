@@ -21,7 +21,7 @@ class TestMalformedResponses:
 
         with (
             patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
-            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
+            patch("msmtp.sender._backoff_sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=1) as sender:
                 result = await sender.send(
@@ -55,7 +55,7 @@ class TestMalformedResponses:
 
         with (
             patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
-            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+            patch("msmtp.sender._backoff_sleep", new=AsyncMock()) as mock_sleep,
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=4) as sender:
                 result = await sender.send(
@@ -76,7 +76,7 @@ class TestMalformedResponses:
 
         with (
             patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
-            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+            patch("msmtp.sender._backoff_sleep", new=AsyncMock()) as mock_sleep,
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=3) as sender:
                 result = await sender.send(
@@ -98,7 +98,7 @@ class TestNetworkFailures:
 
         with (
             patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
-            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
+            patch("msmtp.sender._backoff_sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=2) as sender:
                 result = await sender.send(
@@ -118,7 +118,7 @@ class TestNetworkFailures:
 
         with (
             patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
-            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
+            patch("msmtp.sender._backoff_sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=2) as sender:
                 result = await sender.send(
@@ -136,7 +136,7 @@ class TestNetworkFailures:
 
         with (
             patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
-            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
+            patch("msmtp.sender._backoff_sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=1) as sender:
                 result = await sender.send(
@@ -154,7 +154,7 @@ class TestNetworkFailures:
 
         with (
             patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
-            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
+            patch("msmtp.sender._backoff_sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=1) as sender:
                 result = await sender.send(

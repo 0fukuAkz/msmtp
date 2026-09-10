@@ -32,6 +32,11 @@ from .validation import (
 
 logger = logging.getLogger(__name__)
 
+# Delay between immediate retries. Bound at module level so tests can stub the
+# backoff without patching asyncio.sleep globally, which would also stop
+# RetryQueue's background loop from ever yielding to the event loop.
+_backoff_sleep = asyncio.sleep
+
 
 class LoadBalancingStrategy(Enum):
     """Server selection strategy for load balancing."""
@@ -343,7 +348,7 @@ class AsyncSMTPSender:
 
                 # Retry with backoff
                 backoff = 2 ** (attempt - 1)  # 1s, 2s, 4s, ...
-                await asyncio.sleep(backoff)
+                await _backoff_sleep(backoff)
 
         # Unreachable: the loop always returns. Kept for type-checker completeness.
         return EmailResult(  # pragma: no cover
@@ -483,7 +488,11 @@ class AsyncSMTPSender:
         msg["To"] = ", ".join(to_addrs)
         msg["Subject"] = sanitize_subject(subject)
         msg["Date"] = formatdate(localtime=True)
-        msg["Message-ID"] = make_msgid()
+        # Take the Message-ID domain from the sender address. Without one,
+        # make_msgid() calls socket.getfqdn(): a blocking reverse-DNS lookup run on
+        # the event loop for every message (~35s each on macOS CI runners).
+        sender_domain = parseaddr(from_addr)[1].rpartition("@")[2]
+        msg["Message-ID"] = make_msgid(domain=sender_domain or None)
 
         if cc:
             msg["Cc"] = ", ".join(cc)

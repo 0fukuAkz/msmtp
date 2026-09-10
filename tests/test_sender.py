@@ -207,7 +207,7 @@ class TestSendRetryBehavior:
 
         with (
             patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
-            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
+            patch("msmtp.sender._backoff_sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=3) as sndr:
                 result = await sndr.send(
@@ -227,7 +227,7 @@ class TestSendRetryBehavior:
 
         with (
             patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
-            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+            patch("msmtp.sender._backoff_sleep", new=AsyncMock()) as mock_sleep,
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=5) as sndr:
                 result = await sndr.send(
@@ -246,7 +246,7 @@ class TestSendRetryBehavior:
 
         with (
             patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
-            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
+            patch("msmtp.sender._backoff_sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=3) as sndr:
                 result = await sndr.send(
@@ -283,7 +283,7 @@ class TestSendRetryBehavior:
 
         with (
             patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
-            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
+            patch("msmtp.sender._backoff_sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=1) as sndr:
                 result = await sndr.send(
@@ -305,7 +305,7 @@ class TestSendRetryBehavior:
 
         with (
             patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=mock_smtp),
-            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
+            patch("msmtp.sender._backoff_sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([smtp_server], max_retries=1) as sndr:
                 await sndr.send(

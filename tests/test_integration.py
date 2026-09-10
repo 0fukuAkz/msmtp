@@ -88,7 +88,7 @@ class TestCircuitBreakerRecovery:
 
         with (
             patch("msmtp.connection_pool.aiosmtplib.SMTP", return_value=bad_mock),
-            patch("msmtp.sender.asyncio.sleep", new=AsyncMock()),
+            patch("msmtp.sender._backoff_sleep", new=AsyncMock()),
         ):
             async with AsyncSMTPSender([server], max_retries=1) as sender:
                 pool = sender._pools["s1"]
